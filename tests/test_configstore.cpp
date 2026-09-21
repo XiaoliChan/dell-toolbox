@@ -33,12 +33,6 @@ private slots:
         QCOMPARE(sp.exitDebounceS, 30);
         QVERIFY(sp.gameProcesses.isEmpty());
 
-        const FailsafeParams fp = c.loadFailsafeParams();
-        QCOMPARE(fp.cpuTripC, 95);
-        QCOMPARE(fp.gpuTripC, 85);
-        QCOMPARE(fp.triggerDelayS, 8);
-        QCOMPARE(fp.releaseDelayS, 60);
-
         QCOMPARE(c.loadManualExpireMin(), 30);
 
         const DynamicProfile dp = c.loadDynamicProfile();
@@ -64,9 +58,6 @@ private slots:
             sp.exitDebounceS = 25;
             sp.gameProcesses = {"game.exe", "steam.exe"};
             c.saveSceneParams(sp);
-            FailsafeParams fp;
-            fp.cpuTripC = 93;
-            c.saveFailsafeParams(fp);
             c.saveManualExpireMin(45);
             DynamicProfile dp;
             dp.cpuPl1Table = {{65, 40}, {75, 50}, {85, 60}};
@@ -86,10 +77,6 @@ private slots:
         QCOMPARE(sp.enterDebounceS, 12);
         QCOMPARE(sp.exitDebounceS, 25);
         QCOMPARE(sp.gameProcesses, QStringList({"game.exe", "steam.exe"}));
-
-        const FailsafeParams fp = c.loadFailsafeParams();
-        QCOMPARE(fp.cpuTripC, 93);
-        QCOMPARE(fp.gpuTripC, 85);
 
         QCOMPARE(c.loadManualExpireMin(), 45);
 

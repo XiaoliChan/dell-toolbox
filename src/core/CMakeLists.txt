@@ -3,7 +3,6 @@ add_library(dtb_core STATIC
     PolicyChain.cpp
     SceneDetector.cpp
     ScenePolicy.cpp
-    FailsafePolicy.cpp
     DynamicPolicy.cpp
     ManualOverride.cpp
     BaselinePolicy.cpp

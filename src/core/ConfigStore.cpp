@@ -150,22 +150,6 @@ void ConfigStore::saveManualProfiles(const QList<ManualProfile>& profiles) {
     m_s.setValue("dtb/manual/profiles", raw.join(';'));
 }
 
-FailsafeParams ConfigStore::loadFailsafeParams() {
-    FailsafeParams p;
-    p.cpuTripC = m_s.value("dtb/failsafe/cpuTripC", p.cpuTripC).toInt();
-    p.gpuTripC = m_s.value("dtb/failsafe/gpuTripC", p.gpuTripC).toInt();
-    p.triggerDelayS = m_s.value("dtb/failsafe/delayS", p.triggerDelayS).toInt();
-    p.releaseDelayS = m_s.value("dtb/failsafe/resetS", p.releaseDelayS).toInt();
-    return p;
-}
-
-void ConfigStore::saveFailsafeParams(const FailsafeParams& p) {
-    m_s.setValue("dtb/failsafe/cpuTripC", p.cpuTripC);
-    m_s.setValue("dtb/failsafe/gpuTripC", p.gpuTripC);
-    m_s.setValue("dtb/failsafe/delayS", p.triggerDelayS);
-    m_s.setValue("dtb/failsafe/resetS", p.releaseDelayS);
-}
-
 int ConfigStore::loadManualExpireMin() {
     return m_s.value("dtb/manual/expireMin", 30).toInt();
 }

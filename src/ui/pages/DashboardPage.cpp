@@ -187,7 +187,7 @@ QWidget* DashboardPage::buildFansCard() {
     m_thermalChip->setObjectName(QStringLiteral("chip"));
     chips->addWidget(m_thermalChip);
     chips->addSpacing(16);
-    chips->addWidget(chipCaption(QStringLiteral("Policy")));
+    chips->addWidget(chipCaption(QStringLiteral("Power plan")));
     m_policyChip = new QLabel(QStringLiteral("-"), card);
     m_policyChip->setObjectName(QStringLiteral("chip"));
     chips->addWidget(m_policyChip);
@@ -316,15 +316,12 @@ void DashboardPage::onSnapshot(const SystemSnapshot& s) {
     //    read-only - say so instead of an empty name
     //  - a named power profile applied and unexpired: show its name
     //  - otherwise: the active policy-chain layer
-    if (m_controller->passive()) {
-        m_policyChip->setText(tr("AWCC (monitor)"));
-    } else {
-        QString policy = m_controller->activePolicy();
-        if (policy == QLatin1String("manual") && !m_controller->manualProfileName().isEmpty()
-            && m_controller->manual()->active(s.tsMs))
-            policy = m_controller->manualProfileName(); // the applied power profile
-        m_policyChip->setText(policy);
-    }
+    // The chip shows the WINDOWS POWER PLAN the profile mapping drives
+    // (Balanced / High performance / a custom plan's name) - the thing users
+    // actually correlate with each thermal profile.
+    const QString plan = m_controller->activePlanName();
+    m_policyChip->setText(m_controller->passive() && plan.isEmpty() ? tr("AWCC (monitor)")
+                                                                    : (plan.isEmpty() ? QStringLiteral("-") : plan));
     // Charging mode: seeded by the controller's first poll (no signal), so
     // mirror it here; chargingModeChanged keeps it instant on real changes.
     const QString chargeKey = m_controller->chargingMode();

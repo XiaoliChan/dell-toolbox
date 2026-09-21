@@ -12,7 +12,6 @@
 #include "core/BaselinePolicy.h"
 #include "core/ConfigStore.h"
 #include "core/DynamicPolicy.h"
-#include "core/FailsafePolicy.h"
 #include "core/ManualOverride.h"
 #include "core/PolicyChain.h"
 #include "core/SceneDetector.h"
@@ -21,7 +20,7 @@
 
 namespace dtb {
 
-// The 1 Hz closed loop: read HAL -> snapshot -> scene/failsafe timers ->
+// The 1 Hz closed loop: read HAL -> snapshot -> scene timers ->
 // policy chain -> manual override on top -> apply with write throttling.
 // tickOnce() is the synchronous single step used by tests; start() drives the
 // same path from a timer.
@@ -71,11 +70,13 @@ public:
     // Applies only when enabled in Settings.
     void setPowerPlanSyncEnabled(bool on) { m_planSyncEnabled = on; }
     bool powerPlanSyncEnabled() const { return m_planSyncEnabled; }
+    // Display name of the Windows plan the profile mapping applied last.
+    QString activePlanName() const { return m_planActiveName; }
     // Overrides monitor mode: write even when AWCC processes are detected.
     void setForceControl(bool on) { m_forceControl = on; }
     // Full state reload after Settings "Reset to defaults": every running
     // object re-reads the (now default) config - mode, curves, boost floors,
-    // scene, failsafe - otherwise stale in-memory values survive the reset.
+    // scene - otherwise stale in-memory values survive the reset.
     void reloadFromConfig();
     // Drop the cached last-written mode so the next tick re-applies it (mode UI).
     // Marks a user write as pending: external-profile adoption must not fight it.
@@ -90,7 +91,6 @@ public:
     std::optional<ThermalMode> failedMode() const { return m_failedMode; }
     SceneDetector* scene() { return &m_scene; }
     BaselinePolicy* baseline() { return &m_baseline; }
-    FailsafePolicy* failsafe() { return &m_failsafe; }
     DynamicPolicy* dynamicPolicy() { return &m_dynamic; }
 
 signals:
@@ -120,7 +120,6 @@ private:
     SceneDetector m_scene;
     ScenePolicy m_scenePolicy;
     DynamicPolicy m_dynamic;
-    FailsafePolicy m_failsafe;
     BaselinePolicy m_baseline;
     ManualOverride m_manual;
     PolicyChain m_chain;
@@ -146,6 +145,7 @@ private:
     bool m_planBusy = false; // a powercfg chain is in flight
     ThermalMode m_planWanted = ThermalMode::Balanced; // latest request
     bool m_planAppliedHigh = false; // what the last completed chain applied
+    QString m_planActiveName; // display name of the applied plan
     bool m_planCreateTried = false; // one duplicatescheme retry per request
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone

@@ -148,7 +148,7 @@ void SettingsPage::onLogLevelChanged(int index) {
 void SettingsPage::onResetDefaults() {
     m_config->resetToDefaults();
     m_logLevel->setCurrentIndex(1);
-    // Re-reads mode/curves/boosts/scene/failsafe into the running loop and
+    // Re-reads mode/curves/boosts/scene into the running loop and
     // emits configReloaded() so every page refreshes its controls.
     m_controller->reloadFromConfig();
 }

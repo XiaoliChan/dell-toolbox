@@ -6,7 +6,6 @@
 #include <QString>
 
 #include "core/DynamicPolicy.h"
-#include "core/FailsafePolicy.h"
 #include "core/SceneDetector.h"
 #include "core/Snapshot.h"
 
@@ -30,9 +29,6 @@ public:
 
     SceneParams loadSceneParams();
     void saveSceneParams(const SceneParams& p);
-
-    FailsafeParams loadFailsafeParams();
-    void saveFailsafeParams(const FailsafeParams& p);
 
     int loadManualExpireMin();
     void saveManualExpireMin(int minutes);

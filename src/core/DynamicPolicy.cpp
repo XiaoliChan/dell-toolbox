@@ -5,7 +5,7 @@
 namespace dtb {
 
 namespace {
-// GPU reading: AWCC sensor first, NVAPI as fallback (mirrors FailsafePolicy).
+// GPU reading: AWCC sensor first, NVAPI as fallback.
 std::optional<int> gpuTempOf(const SystemSnapshot& s) {
     if (auto t = s.tempOf(0x06))
         return t;

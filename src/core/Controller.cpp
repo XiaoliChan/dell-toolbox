@@ -22,8 +22,7 @@ constexpr qint64 kModeAdoptGraceMs = 5000;
 
 Controller::Controller(HalSet hal, ConfigStore* cfg, QObject* parent)
     : QObject(parent), m_hal(hal), m_cfg(cfg), m_scene(m_cfg ? m_cfg->loadSceneParams() : SceneParams{}),
-      m_scenePolicy(&m_scene), m_dynamic(m_cfg ? m_cfg->loadDynamicProfile() : DynamicProfile{}),
-      m_failsafe(m_cfg ? m_cfg->loadFailsafeParams() : FailsafeParams{}) {
+      m_scenePolicy(&m_scene), m_dynamic(m_cfg ? m_cfg->loadDynamicProfile() : DynamicProfile{}) {
     if (m_cfg) {
         m_baseline.setMode(m_cfg->loadMode());
         m_manual.expiresSec = m_cfg->loadManualExpireMin() * 60;
@@ -45,7 +44,6 @@ Controller::Controller(HalSet hal, ConfigStore* cfg, QObject* parent)
     // writes are wired to hardware — otherwise it would only move targets no
     // one applies and the active-policy readout would be misleading.
     m_chain.addPolicy(&m_scenePolicy);
-    m_chain.addPolicy(&m_failsafe);
 
     connect(&m_timer, &QTimer::timeout, this, &Controller::tickOnce);
 }
@@ -74,7 +72,6 @@ void Controller::reloadFromConfig() {
         }
     }
     m_scene.setParams(m_cfg->loadSceneParams());
-    m_failsafe.setParams(m_cfg->loadFailsafeParams());
     m_dynamic.setProfile(m_cfg->loadDynamicProfile());
     m_planSyncEnabled = m_cfg->loadPowerPlanSync();
     m_lastModeWritten.reset(); // force re-apply of the reloaded mode
@@ -173,7 +170,6 @@ void Controller::tickOnce() {
     }
     if (m_scene.params().enabled)
         m_scene.onTick(m_snapshot);
-    m_failsafe.onTick(m_snapshot);
 
     ControlTargets targets;
     QString active;
@@ -263,6 +259,7 @@ void Controller::beginPlanChain() {
                         finishPlanChain();
                         return;
                     }
+                    m_planActiveName = QStringLiteral("High performance");
                     setActivePlan(m.captured(1), [this] { finishPlanChain(); });
                 });
                 connect(dup, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
@@ -277,7 +274,12 @@ void Controller::beginPlanChain() {
             finishPlanChain();
             return;
         }
-        queryActivePlan([this, target](const QString& active) {
+        QString targetName;
+        for (const auto& plan : parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput())))
+            if (plan.guid == target)
+                targetName = plan.name;
+        queryActivePlan([this, target, targetName](const QString& active) {
+            m_planActiveName = targetName.isEmpty() ? QStringLiteral("Custom") : targetName;
             if (active == target) {
                 finishPlanChain();
                 return;

@@ -105,22 +105,6 @@ private slots:
         QVERIFY(saw90);
     }
 
-    void failsafeTripsToGModeAndRecovers() {
-        auto hot = [](SystemSnapshot& s, int tick) {
-            s.sensors.push_back({0x01, tick < 8 ? 96 : 60});
-            s.sensors.push_back({0x06, 50});
-            s.gpu.utilPercent = 5;
-        };
-        Rig rig(hot);
-        rig.tick(8);
-        QCOMPARE(rig.ctrl->activePolicy(), QStringLiteral("failsafe"));
-        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::GMode));
-
-        rig.tick(60); // 60 cool ticks release the failsafe
-        QCOMPARE(rig.ctrl->activePolicy(), QStringLiteral("baseline"));
-        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::Custom)); // restored to the saved baseline
-    }
-
     void adoptsExternalProfileChanges() {
         Rig rig([](SystemSnapshot& s, int) {
             s.sensors.push_back({0x01, 50});
