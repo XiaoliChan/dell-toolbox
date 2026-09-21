@@ -360,6 +360,12 @@ bool DellAcpiChannel::getUsttModes(UsttModes& out) {
 }
 
 bool DellAcpiChannel::getChargeState(ChargeState& out) {
+    // The GET carries the 44-byte header plus a trailing 36-byte output
+    // template written below (offsets 44..79): a smaller buffer (the size
+    // probe can settle on 64) cannot hold it and the writes below would
+    // overrun the vector.
+    if (m_bufferLength < 80)
+        return false;
     std::vector<unsigned char> b(m_bufferLength, 0);
     auto put16 = [&](int off, unsigned short v) { memcpy(b.data() + off, &v, 2); };
     auto put32 = [&](int off, unsigned int v) { memcpy(b.data() + off, &v, 4); };

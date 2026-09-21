@@ -2,6 +2,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QHash>
 #include <QLabel>
 #include <QTimer>
 #include <QPushButton>

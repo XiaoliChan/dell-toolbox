@@ -12,6 +12,7 @@
 #include "core/Autostart.h"
 #include "core/Logger.h"
 #include "ui/widgets/Card.h"
+#include "ui/widgets/WheelGuard.h"
 
 namespace dtb::ui {
 
@@ -26,6 +27,9 @@ SettingsPage::SettingsPage(HalSet hal, Controller* controller, ConfigStore* conf
     layout->addWidget(buildGeneralCard());
     layout->addWidget(buildAboutCard());
     layout->addStretch(1);
+    // The log-level combo must not change under a scroll gesture, like every
+    // other page's sliders/spin boxes/combos.
+    WheelGuard::apply(this);
 }
 
 QWidget* SettingsPage::buildGeneralCard() {

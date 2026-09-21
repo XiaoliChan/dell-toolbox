@@ -1,8 +1,8 @@
 name: windows build
 
 # Actions minutes are metered on private repos: build only release tags and
-# manual dispatches. Everyday verification runs locally (scripts/build-local.ps1
-# on Windows, cmake+ctest on Linux).
+# manual dispatches. Everyday verification runs locally (cmake+ctest on Linux,
+# the same CMake invocation with -DDTB_HAL=win on Windows).
 on:
   push:
     tags: ["v*"]
