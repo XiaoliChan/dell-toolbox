@@ -1,0 +1,72 @@
+# Disposable Track-A helper (manual dispatch only): the OC Controls
+# InstallShield payload only unpacks on Windows; this run harvests the
+# extracted files from %TEMP% while setup.exe waits at its dialog, then does a
+# proper MSI administrative install of whatever .msi it finds.
+name: awcc-extract
+on:
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download OC Controls external package
+        shell: pwsh
+        run: |
+          curl.exe -sL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o oc.zip "https://dl.dell.com/FOLDER04338016M/1/OCControls_1.0.4.0_External.zip"
+          if ((Get-Item oc.zip).Length -lt 50MB) { throw "download too small" }
+          Expand-Archive oc.zip -DestinationPath pkg
+
+      - name: Launch setup and harvest unpacked payload
+        shell: pwsh
+        run: |
+          $t0 = Get-Date
+          $p = Start-Process -FilePath "pkg\setup.exe" -PassThru
+          Start-Sleep -Seconds 40   # let it unpack prerequisites + main payload and reach the dialog
+          New-Item -ItemType Directory -Force C:\harvest | Out-Null
+          $roots = @($env:TEMP, "$env:SystemDrive\ProgramData")
+          foreach ($root in $roots) {
+            Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.LastWriteTime -gt $t0 -and $_.Length -gt 0 } |
+              ForEach-Object {
+                $rel = $_.FullName.Substring($root.Length).TrimStart('\') -replace '[:]', '_'
+                $target = Join-Path ("C:\harvest\" + ($root -replace '[:\\]', '_')) $rel
+                New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+                Copy-Item $_.FullName $target -Force
+              }
+          }
+          taskkill /PID $p.Id /T /F 2>$null
+          "harvested files:"
+          Get-ChildItem C:\harvest -Recurse -File | Select-Object Length, FullName | Format-Table -AutoSize | Out-String -Width 300
+
+      - name: MSI administrative install
+        shell: pwsh
+        run: |
+          $msis = Get-ChildItem C:\harvest -Recurse -Filter *.msi
+          $i = 0
+          foreach ($m in $msis) {
+            $i++
+            $dir = "C:\msiadmin\$i"
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            $p = Start-Process msiexec.exe -ArgumentList '/a', "`"$($m.FullName)`"", '/qn', "TARGETDIR=$dir" -Wait -PassThru
+            "msiexec $($m.Name) exit=$($p.ExitCode)"
+          }
+          Get-ChildItem C:\msiadmin -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 60 Length, FullName | Format-Table -AutoSize | Out-String -Width 300
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path C:\harvest -DestinationPath C:\harvest.zip -Force
+          if (Test-Path C:\msiadmin) { Compress-Archive -Path C:\msiadmin -DestinationPath C:\msiadmin.zip -Force }
+          Get-Item C:\*.zip | ForEach-Object { "$($_.Name) $($_.Length)" }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: occontrols-payload
+          path: |
+            C:\harvest.zip
+            C:\msiadmin.zip
+          if-no-files-found: error
+          retention-days: 7

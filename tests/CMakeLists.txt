@@ -1,0 +1,18 @@
+find_package(Qt6 REQUIRED COMPONENTS Test)
+
+function(dtb_add_test NAME)
+    qt_add_executable(${NAME} ${NAME}.cpp)
+    target_link_libraries(${NAME} PRIVATE dtb_core Qt6::Test)
+    add_test(NAME ${NAME} COMMAND ${NAME})
+endfunction()
+
+dtb_add_test(test_snapshot)
+dtb_add_test(test_fancurve)
+dtb_add_test(test_policychain)
+dtb_add_test(test_scenedetector)
+dtb_add_test(test_failsafe)
+dtb_add_test(test_dynamic)
+dtb_add_test(test_configstore)
+dtb_add_test(test_mockhal)
+dtb_add_test(test_controller)
+dtb_add_test(test_logger)

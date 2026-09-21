@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/res">
+    <file>autostart-task.xml</file>
+    <file>combo-arrow.png</file>
+  </qresource>
+</RCC>

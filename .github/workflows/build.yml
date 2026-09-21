@@ -1,0 +1,123 @@
+name: build
+
+# Actions minutes are metered on private repos: build only release tags and
+# manual dispatches. Everyday verification runs locally (scripts/build-local.ps1
+# on Windows, cmake+ctest on Linux).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: core tests (linux, mock HAL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Qt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libopengl-dev libglx-dev libgl1-mesa-dev libglib2.0-dev
+      - name: Install Qt 6.8.3 (gcc_64)
+        run: |
+          pip install aqtinstall
+          aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O "$HOME/Qt"
+      - name: Configure + build (mock)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/gcc_64" -DDTB_HAL=mock
+          cmake --build build
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: windows portable build (msvc)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt 6.8.3 (msvc)
+        id: qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Configure (win HAL)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDTB_HAL=win `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Deploy Qt runtime (portable)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build -Recurse -Filter dell-toolbox.exe | Where-Object { $_.DirectoryName -match 'Release' } | Select-Object -First 1
+          if (-not $exe) { $exe = Get-ChildItem build -Recurse -Filter dell-toolbox.exe | Select-Object -First 1 }
+          if (-not $exe) { throw "dell-toolbox.exe not found in build/" }
+          "exe: $($exe.FullName)"
+          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" --release --no-translations --compiler-runtime $exe.FullName
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+          Add-Content $env:GITHUB_ENV "exe_dir=$($exe.DirectoryName)"
+          Add-Content $env:GITHUB_PATH (Split-Path $exe.FullName)
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $dir = $env:exe_dir
+          $stage = "stage\dell-toolbox"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item "$dir\dell-toolbox.exe" $stage
+          Copy-Item "$dir\*.dll" $stage -ErrorAction SilentlyContinue
+          foreach ($sub in @("platforms", "styles", "imageformats", "iconengines", "translations")) {
+            if (Test-Path "$dir\$sub") { Copy-Item "$dir\$sub" "$stage\$sub" -Recurse }
+          }
+          # VC runtime DLLs: without them machines lacking the VC++ redist fail
+          # with a "side-by-side configuration is incorrect" error at launch.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          "vs: $vsPath"
+          $dll = Get-ChildItem "$vsPath\VC\Redist" -Recurse -Filter "vcruntime140.dll" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.DirectoryName -match '\\x64\\' -and $_.DirectoryName -notmatch 'onecore' } |
+                 Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $dll) {
+            $dll = Get-ChildItem "$vsPath\VC\Redist" -Recurse -Filter "vcruntime140.dll" -ErrorAction SilentlyContinue |
+                   Where-Object { $_.DirectoryName -match '\\x64\\' } | Select-Object -First 1
+          }
+          if ($dll) {
+            "VC runtime from: $($dll.Directory)"
+            Copy-Item "$($dll.Directory)\*.dll" $stage -Force
+          } else {
+            Get-ChildItem "$vsPath\VC\Redist" -Recurse -Directory | ForEach-Object { $_.FullName }
+            throw "VC runtime redist not found"
+          }
+          Copy-Item LICENSE, README.md -Destination $stage
+          # Contents at the zip root: unzipping yields the app folder
+          # contents directly instead of a nested folder-in-folder.
+          Compress-Archive -Path "$stage\*" -DestinationPath dell-toolbox-windows-x64.zip -Force
+          Get-ChildItem $stage | ForEach-Object { $_.Name }
+      - name: Launch smoke test (real admin build)
+        shell: pwsh
+        run: |
+          # The runner session is elevated, so the requireAdministrator build
+          # must launch directly. This is the exact exe we ship.
+          $exe = Join-Path $env:exe_dir "dell-toolbox.exe"
+          if (-not (Test-Path $exe)) { throw "smoke exe not found: $exe" }
+          $p = Start-Process -FilePath $exe -ArgumentList "--version" -PassThru -Wait
+          "smoke exit: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) {
+            Get-WinEvent -LogName Application -MaxEvents 30 -ErrorAction SilentlyContinue |
+              Where-Object { $_.ProviderName -match "SideBySide|.NET Runtime|Application Error" } |
+              ForEach-Object { "$($_.ProviderName): $($_.Message)" }
+            throw "launch smoke failed"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dell-toolbox-windows-x64
+          path: dell-toolbox-windows-x64.zip
+          retention-days: 14
