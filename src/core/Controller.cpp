@@ -14,6 +14,13 @@ namespace dtb {
 namespace {
 // A bare "12345678-1234-..." GUID (duplicatescheme prints "Power Scheme GUID: <guid> (name)").
 const QRegularExpression kGuidOnlyRe("([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
+// Well-known Windows plan template GUIDs; instance GUIDs are machine-specific.
+// powercfg's GUID casing is not guaranteed - compare case-insensitively.
+const QLatin1String kHighPerfPlanGuid("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
+const QLatin1String kBalancedPlanGuid("381b4222-f694-41f0-9685-ff5bb260df2e");
+// Stock display names for the paths that never see the localized /list entry.
+const QLatin1String kHighPerfPlanName("High performance");
+const QLatin1String kBalancedPlanName("Balanced");
 // The firmware's profile readback can lag our own successful write by a tick
 // or two; ignore adoptions inside this window so a slow read does not revert
 // the mode we just applied.
@@ -82,8 +89,10 @@ void Controller::reloadFromConfig() {
 
 void Controller::setPassive(bool on) {
     m_passive = on;
-    if (on)
+    if (on) {
         m_pendingModeWrite = false; // monitor mode sends nothing; nothing can be in flight
+        m_planActiveName.clear(); // the policy chip falls back to "AWCC (monitor)"
+    }
 }
 
 SystemSnapshot Controller::readSnapshot() {
@@ -227,19 +236,20 @@ void Controller::beginPlanChain() {
         // name lookup produced a bogus "Custom").
         const auto plans = parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()));
         QString target;
+        QString targetName;
         for (const PowerPlanEntry& plan : plans) {
             // powercfg's GUID casing is not guaranteed: match the well-known
             // template GUIDs case-insensitively or the fallback silently dies.
-            const bool high = plan.guid.compare(QLatin1String("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"),
-                                                Qt::CaseInsensitive) == 0
+            const bool high = plan.guid.compare(kHighPerfPlanGuid, Qt::CaseInsensitive) == 0
                               || plan.name.contains(QLatin1String("high"), Qt::CaseInsensitive)
                               || plan.name.contains(QString::fromUtf8("高性能"));
-            const bool balanced = plan.guid.compare(QLatin1String("381b4222-f694-41f0-9685-ff5bb260df2e"),
-                                                    Qt::CaseInsensitive) == 0
+            const bool balanced = plan.guid.compare(kBalancedPlanGuid, Qt::CaseInsensitive) == 0
                                   || plan.name.contains(QLatin1String("balanc"), Qt::CaseInsensitive)
                                   || plan.name.contains(QString::fromUtf8("平衡"));
-            if (wantsHigh ? high : balanced)
+            if (wantsHigh ? high : balanced) {
                 target = plan.guid;
+                targetName = plan.name; // travels with the guid: a second pass cannot drift
+            }
         }
         if (target.isEmpty()) {
             // High Performance can be missing (Dell uninstallers wipe it;
@@ -247,6 +257,18 @@ void Controller::beginPlanChain() {
             // from the stock template once, then retry the chain.
             if (wantsHigh && !m_planCreateTried) {
                 m_planCreateTried = true;
+                if (!m_mintedHighGuid.isEmpty()) {
+                    // /list enumeration can lag the create (see below):
+                    // re-activate the copy minted earlier instead of
+                    // duplicating the template again - every retry would mint
+                    // one more permanent "High performance" plan in the OS.
+                    setActivePlan(m_mintedHighGuid, [this](bool ok) {
+                        if (!ok)
+                            m_mintedHighGuid.clear(); // deleted meanwhile: allow a fresh mint
+                        finishPlanChain();
+                    });
+                    return;
+                }
                 dtbLog(info) << "plan sync: High Performance missing - recreating from template";
                 auto* dup = new QProcess(this);
                 connect(dup, &QProcess::finished, this, [this, dup] {
@@ -263,35 +285,47 @@ void Controller::beginPlanChain() {
                         finishPlanChain();
                         return;
                     }
-                    m_planActiveName = QStringLiteral("High performance");
-                    setActivePlan(m.captured(1), [this] { finishPlanChain(); });
+                    m_mintedHighGuid = m.captured(1); // remember it: never mint twice
+                    setActivePlan(m_mintedHighGuid, [this](bool ok) {
+                        if (ok) // a failed switch must not rename the chip
+                            m_planActiveName = kHighPerfPlanName;
+                        finishPlanChain();
+                    });
                 });
-                connect(dup, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
-                    finishPlanChain();
+                // FailedToStart never emits finished(); every other error is
+                // followed by finished(), so filtering keeps finishPlanChain
+                // single-shot (a second release would open the busy gate while
+                // a replacement chain started by the first release runs).
+                connect(dup, &QProcess::errorOccurred, this, [this, dup](QProcess::ProcessError error) {
+                    if (error == QProcess::FailedToStart) {
+                        dup->deleteLater();
+                        finishPlanChain();
+                    }
                 });
                 dup->start(QStringLiteral("powercfg"),
-                           {QStringLiteral("-duplicatescheme"),
-                            QStringLiteral("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")});
+                           {QStringLiteral("-duplicatescheme"), kHighPerfPlanGuid});
                 return;
             }
             dtbLog(info) << "plan sync: no matching plan (wantsHigh" << wantsHigh << ")";
             finishPlanChain();
             return;
         }
-        QString targetName;
-        for (const auto& plan : plans)
-            if (plan.guid == target)
-                targetName = plan.name;
         queryActivePlan([this, target, targetName, wantsHigh](const QString& active) {
-            m_planActiveName = targetName.isEmpty()
-                                   ? (wantsHigh ? QStringLiteral("High performance")
-                                                : QStringLiteral("Balanced"))
-                                   : targetName;
-            if (active == target) {
+            // targetName is always found here (target came from this same
+            // list); the stock-name fallback guards future lookup changes.
+            const QString planName = targetName.isEmpty()
+                                         ? QString(wantsHigh ? kHighPerfPlanName : kBalancedPlanName)
+                                         : targetName;
+            if (QString::compare(active, target, Qt::CaseInsensitive) == 0) {
+                m_planActiveName = planName; // wanted plan is already active
                 finishPlanChain();
                 return;
             }
-            setActivePlan(target, [this] { finishPlanChain(); });
+            setActivePlan(target, [this, planName](bool ok) {
+                if (ok)
+                    m_planActiveName = planName;
+                finishPlanChain();
+            });
         });
     });
     list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
@@ -323,17 +357,25 @@ void Controller::queryActivePlan(const std::function<void(const QString&)>& done
     proc->start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
 }
 
-void Controller::setActivePlan(const QString& guid, const std::function<void()>& done) {
+void Controller::setActivePlan(const QString& guid, const std::function<void(bool)>& done) {
+    if (m_passive) { // monitor mode performs no writes, not even queued ones
+        dtbLog(info) << "plan sync: passive - skipping /setactive";
+        done(false);
+        return;
+    }
     auto* proc = new QProcess(this);
     connect(proc, &QProcess::errorOccurred, this, [this, proc, done](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {
             proc->deleteLater();
-            done(); // nothing was switched; still release the busy gate
+            done(false); // nothing was switched; still release the busy gate
         }
     });
     connect(proc, &QProcess::finished, this, [this, proc, done] {
         proc->deleteLater();
-        done();
+        const bool ok = proc->exitCode() == 0;
+        if (!ok)
+            dtbLog(warn) << "plan sync: powercfg /setactive failed (exit" << proc->exitCode() << ")";
+        done(ok);
     });
     proc->start(QStringLiteral("powercfg"), {QStringLiteral("/setactive"), guid});
 }

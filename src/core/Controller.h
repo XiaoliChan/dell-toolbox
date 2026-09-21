@@ -64,7 +64,7 @@ public:
     void beginPlanChain();
     void finishPlanChain();
     void queryActivePlan(const std::function<void(const QString&)>& done);
-    void setActivePlan(const QString& guid, const std::function<void()>& done);
+    void setActivePlan(const QString& guid, const std::function<void(bool)>& done);
     // Thermal-profile -> power plan sync: G-Mode / Ultra Performance switch
     // Windows to the High Performance plan, every other profile to Balanced.
     // Applies only when enabled in Settings.
@@ -146,6 +146,7 @@ private:
     ThermalMode m_planWanted = ThermalMode::Balanced; // latest request
     bool m_planAppliedHigh = false; // what the last completed chain applied
     QString m_planActiveName; // display name of the applied plan
+    QString m_mintedHighGuid; // duplicatescheme copy minted this session (never mint twice)
     bool m_planCreateTried = false; // one duplicatescheme retry per request
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone

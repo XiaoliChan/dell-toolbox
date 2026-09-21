@@ -18,7 +18,12 @@ struct PowerPlanEntry {
 // and feed readAllStandardOutput() here (never block the UI thread). Shared by
 // the Controller's profile->plan sync and the PerformancePage plan picker.
 inline QVector<PowerPlanEntry> parsePowerPlans(const QString& powerCfgOutput) {
-    static const QRegularExpression kPlanRe(QStringLiteral("GUID: ([0-9a-fA-F-]+)\\s+\\(([^)]+)\\)"));
+    // Match the GUID shape + "(name)" rather than the literal "GUID: " label:
+    // localized powercfg output ("GUID du mode d'alimentation : ...",
+    // "Energieschema-GUID: ...") does not contain the English label, which made
+    // every parse come back empty on those systems.
+    static const QRegularExpression kPlanRe(QStringLiteral(
+        "([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\s+\\(([^)]+)\\)"));
     QVector<PowerPlanEntry> plans;
     const QStringList lines = powerCfgOutput.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     for (const QString& line : lines) {
