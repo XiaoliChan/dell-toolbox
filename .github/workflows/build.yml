@@ -145,7 +145,7 @@ jobs:
           if (gh release view $tag 2>$null) {
             gh release upload $tag @files --clobber
           } else {
-            gh release create $tag @files --title "Dell Toolbox $tag" --generate-notes `
+            gh release create $tag @files --draft=false --title "Dell Toolbox $tag" --generate-notes `
               --notes "Portable zip: unzip and run dell-toolbox.exe (administrator). The -setup.exe is an optional installer."
           }
 
