@@ -10,6 +10,10 @@
 #include <QPixmap>
 #include <QStackedWidget>
 #include <QTimer>
+
+#ifdef Q_OS_WIN
+#include <dwmapi.h>
+#endif
 #include <QScrollArea>
 #include <QVBoxLayout>
 
@@ -42,6 +46,20 @@ MainWindow::MainWindow(HalSet hal, Controller* controller, ConfigStore* config, 
     : QMainWindow(parent), m_hal(hal), m_controller(controller), m_config(config) {
     setWindowTitle(QStringLiteral("Dell Toolbox"));
     resize(980, 640);
+
+#ifdef Q_OS_WIN
+    // Blend the native frame into the dark UI: dark title bar everywhere
+    // (Win10 1809+), and on Win11 the caption/border tint to the app bg so
+    // the window reads as one surface instead of a white strip on top.
+    if (HWND hwnd = reinterpret_cast<HWND>(winId())) {
+        const BOOL dark = TRUE;
+        DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark)); // DWMWA_USE_IMMERSIVE_DARK_MODE
+        const COLORREF caption = 0x00110e0d; // #0d0e11 (COLORREF is 0x00BBGGRR)
+        DwmSetWindowAttribute(hwnd, 35, &caption, sizeof(caption)); // DWMWA_CAPTION_COLOR (Win11)
+        const COLORREF border = 0x00271f1f; // #1f2127
+        DwmSetWindowAttribute(hwnd, 34, &border, sizeof(border)); // DWMWA_BORDER_COLOR (Win11)
+    }
+#endif
 
     auto* central = new QWidget(this);
     auto* layout = new QHBoxLayout(central);

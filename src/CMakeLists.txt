@@ -4,6 +4,9 @@ qt_add_executable(dell-toolbox main.cpp)
 
 target_include_directories(dell-toolbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(dell-toolbox PRIVATE Qt6::Widgets dtb_core)
+if(WIN32)
+    target_link_libraries(dell-toolbox PRIVATE dwmapi) # dark title bar
+endif()
 
 add_subdirectory(ui)
 

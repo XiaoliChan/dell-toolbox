@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QIcon>
 #include <QStringList>
 #include <QRegularExpression>
 #include <QTimer>
@@ -16,6 +17,8 @@
 
 #include <shellapi.h>
 
+#include <string>
+
 namespace {
 // Windows silently drops tray balloons/toasts for Win32 apps without an
 // explicit AppUserModelID. Call it before anything creates a tray icon.
@@ -30,6 +33,27 @@ void ensureAppUserModelId() {
         reinterpret_cast<void*>(GetProcAddress(shell, "SetCurrentProcessExplicitAppUserModelID")));
     if (set)
         set(L"dtb.delltoolbox");
+}
+
+// Register a friendly display name and icon for the toast source. Without
+// this, Windows shows the raw AppUserModelID ("dtb.delltoolbox") on every
+// notification instead of "Dell Toolbox".
+void registerToastIdentity() {
+    wchar_t exePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    const std::wstring subkey = L"Software\\Classes\\AppUserModelId\\dtb.delltoolbox";
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, subkey.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr,
+                        &key, nullptr) != ERROR_SUCCESS)
+        return;
+    const std::wstring displayName = L"Dell Toolbox";
+    RegSetValueExW(key, L"DisplayName", 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(displayName.c_str()),
+                   static_cast<DWORD>((displayName.size() + 1) * sizeof(wchar_t)));
+    const std::wstring iconUri = std::wstring(exePath) + L",0";
+    RegSetValueExW(key, L"IconUri", 0, REG_SZ, reinterpret_cast<const BYTE*>(iconUri.c_str()),
+                   static_cast<DWORD>((iconUri.size() + 1) * sizeof(wchar_t)));
+    RegCloseKey(key);
 }
 
 // This is a GUI-subsystem executable: cmd.exe starts it without console
@@ -165,6 +189,9 @@ int main(int argc, char* argv[]) {
     ensureAppUserModelId();
 #endif
     QApplication::setApplicationName(dtb::app::kId);
+#ifdef Q_OS_WIN
+    registerToastIdentity();
+#endif
     QApplication::setApplicationVersion(dtb::app::kVersion);
     QApplication::setOrganizationName(dtb::app::kId);
     const QStringList args = app.arguments();
@@ -220,6 +247,7 @@ int main(int argc, char* argv[]) {
     dtb::Controller controller(hal, &config);
     dtbLog(info) << "controller ready";
     dtb::ui::applyTheme(app);
+    app.setWindowIcon(QIcon(QStringLiteral(":/res/icon-256.png")));
     dtb::ui::MainWindow window(hal, &controller, &config);
     dtbLog(info) << "ui ready";
     for (const QString& a : args) {
@@ -230,7 +258,11 @@ int main(int argc, char* argv[]) {
                 window.resize(sm.captured(1).toInt(), sm.captured(2).toInt());
         }
     }
-    if (!args.contains("--minimized"))
+    // Start minimized when requested via flag or the Settings toggle.
+    const bool startMinimized = args.contains("--minimized") || config.loadStartMinimized();
+    if (startMinimized)
+        window.showMinimized();
+    else
         window.show();
     controller.start(1000);
 

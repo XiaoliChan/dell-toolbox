@@ -1,3 +1,4 @@
+IDI_ICON1 ICON "dell-toolbox.ico"
 #include <windows.h>
 
 #define VER_FILEVERSION 1,0,0,0

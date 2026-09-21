@@ -20,6 +20,9 @@ public:
 
 private slots:
     void onSnapshot(const SystemSnapshot& snapshot);
+    void onThermalModeChanged(ThermalMode mode, bool external);
+    void onPolicyChanged(const QString& policy);
+    void onChargingModeChanged(const QString& mode);
 
 private:
     QWidget* buildHeaderCard();
@@ -48,6 +51,9 @@ private:
     QLabel* m_cpuPower = nullptr;
     QLabel* m_gpuLoad = nullptr;
     QLabel* m_gpuPower = nullptr;
+    QLabel* m_thermalChip = nullptr;
+    QLabel* m_policyChip = nullptr;
+    QLabel* m_chargeMode = nullptr;
     CircularGauge* m_cpuFanTemp = nullptr;
     CircularGauge* m_gpuFanTemp = nullptr;
     CircularGauge* m_cpuFanSpeed = nullptr;

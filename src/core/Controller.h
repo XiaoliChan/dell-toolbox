@@ -81,6 +81,9 @@ signals:
     void thermalModeChanged(dtb::ThermalMode mode, bool external);
     // Emitted after reloadFromConfig(); pages refresh their controls from it.
     void configReloaded();
+    // Emitted when the firmware-reported charging mode changes (polled every
+    // 3rd tick; empty string = read failed, signal suppressed then).
+    void chargingModeChanged(const QString& mode);
 
 private:
     SystemSnapshot readSnapshot();
@@ -112,6 +115,8 @@ private:
     qint64 m_lastModeWriteMs = 0; // last successful mode write (adoption grace window)
     QHash<FanId, int> m_lastFanPercent;
     QHash<FanId, int> m_fanBoost; // Easy mode: per-fan minimum speed
+    QString m_chargingMode; // last known charging mode ("" until first read)
+    int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone
     qint64 m_lastFanWriteMs = 0;
     qint64 m_lastGpuWriteMs = 0;

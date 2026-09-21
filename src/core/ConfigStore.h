@@ -50,6 +50,9 @@ public:
     void saveDynamicProfile(const DynamicProfile& p);
 
     // Coexist with official apps: auto-pause our writers while AWCC runs.
+    bool loadStartMinimized();
+    void saveStartMinimized(bool on);
+
     bool loadAwccCoexist();
     void saveAwccCoexist(bool on);
 

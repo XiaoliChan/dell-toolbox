@@ -196,6 +196,10 @@ void ConfigStore::saveDynamicProfile(const DynamicProfile& p) {
     m_s.setValue("dtb/dynamic/gpuPptTable", formatPointList(p.gpuPptTable));
 }
 
+bool ConfigStore::loadStartMinimized() { return m_s.value("dtb/startMinimized", false).toBool(); }
+
+void ConfigStore::saveStartMinimized(bool on) { m_s.setValue("dtb/startMinimized", on); }
+
 bool ConfigStore::loadAwccCoexist() { return m_s.value("dtb/awccCoexist", true).toBool(); }
 
 void ConfigStore::saveAwccCoexist(bool on) { m_s.setValue("dtb/awccCoexist", on); }

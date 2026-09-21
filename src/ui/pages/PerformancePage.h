@@ -24,7 +24,9 @@ private:
     QWidget* buildPowerPlanCard();
     QWidget* buildSlidersCard();
     void refreshProfiles(const QString& selectName = {});
+    void updateActiveLabel();
     QWidget* m_manualCard = nullptr;
+    QLabel* m_activeLabel = nullptr;
     QComboBox* m_profileCombo = nullptr;
     QPushButton* m_newProfile = nullptr;
     QPushButton* m_renameProfile = nullptr;

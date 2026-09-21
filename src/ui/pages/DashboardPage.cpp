@@ -37,6 +37,9 @@ DashboardPage::DashboardPage(HalSet hal, Controller* controller, ConfigStore* co
     layout->setColumnStretch(1, 1);
 
     connect(controller, &Controller::snapshotUpdated, this, &DashboardPage::onSnapshot);
+    connect(controller, &Controller::thermalModeChanged, this, &DashboardPage::onThermalModeChanged);
+    connect(controller, &Controller::activePolicyChanged, this, &DashboardPage::onPolicyChanged);
+    connect(controller, &Controller::chargingModeChanged, this, &DashboardPage::onChargingModeChanged);
 }
 
 void DashboardPage::setAwccPaused(bool paused) {
@@ -146,7 +149,7 @@ QWidget* DashboardPage::buildTempCard(const QString& title) {
 }
 
 QWidget* DashboardPage::buildFansCard() {
-    auto* card = new Card(QStringLiteral("Fans"), this);
+    auto* card = new Card(QStringLiteral("Thermal & performance"), this);
     auto* row = new QWidget(card);
     auto* rl = new QHBoxLayout(row);
     rl->setContentsMargins(0, 0, 0, 0);
@@ -169,6 +172,26 @@ QWidget* DashboardPage::buildFansCard() {
     rl->addWidget(fanHalf(QStringLiteral("CPU temp"), QStringLiteral("CPU fan"), &m_cpuFanTemp, &m_cpuFanSpeed), 1);
     rl->addWidget(fanHalf(QStringLiteral("GPU temp"), QStringLiteral("GPU fan"), &m_gpuFanTemp, &m_gpuFanSpeed), 1);
     card->bodyLayout()->addWidget(row);
+    // Current thermal profile + the policy currently driving the loop.
+    auto* chips = new QHBoxLayout;
+    chips->setContentsMargins(0, 6, 0, 0);
+    chips->setSpacing(8);
+    auto chipCaption = [](const QString& text) {
+        auto* l = new QLabel(text);
+        l->setObjectName(QStringLiteral("statCaption"));
+        return l;
+    };
+    chips->addWidget(chipCaption(QStringLiteral("Thermal")));
+    m_thermalChip = new QLabel(QStringLiteral("-"), card);
+    m_thermalChip->setObjectName(QStringLiteral("chip"));
+    chips->addWidget(m_thermalChip);
+    chips->addSpacing(16);
+    chips->addWidget(chipCaption(QStringLiteral("Policy")));
+    m_policyChip = new QLabel(QStringLiteral("-"), card);
+    m_policyChip->setObjectName(QStringLiteral("chip"));
+    chips->addWidget(m_policyChip);
+    chips->addStretch(1);
+    card->bodyLayout()->addLayout(chips);
     return card;
 }
 
@@ -194,6 +217,14 @@ QWidget* DashboardPage::buildBatteryCard() {
     m_batteryDetail->setObjectName(QStringLiteral("cardCaption"));
     wrapLabel(m_batteryDetail);
     bl->addWidget(m_batteryDetail);
+    auto* chargeRow = new QHBoxLayout;
+    chargeRow->setContentsMargins(0, 2, 0, 0);
+    chargeRow->addWidget(new QLabel(tr("Charging mode"), card));
+    m_chargeMode = new QLabel(QStringLiteral("-"), card);
+    m_chargeMode->setStyleSheet(QStringLiteral("font-weight:600; color:#e9ebee;"));
+    chargeRow->addWidget(m_chargeMode);
+    chargeRow->addStretch(1);
+    bl->addLayout(chargeRow);
 
     // Detail grid: the figures people actually judge a battery by.
     auto* grid = new QGridLayout;
@@ -324,6 +355,40 @@ void DashboardPage::onSnapshot(const SystemSnapshot& s) {
     }
     m_batteryChip->style()->unpolish(m_batteryChip);
     m_batteryChip->style()->polish(m_batteryChip);
+}
+
+void DashboardPage::onThermalModeChanged(ThermalMode mode, bool external) {
+    Q_UNUSED(external);
+    QString name;
+    switch (mode) {
+    case ThermalMode::Quiet:
+        name = tr("Quiet");
+        break;
+    case ThermalMode::Cool:
+        name = tr("Cool");
+        break;
+    case ThermalMode::Balanced:
+        name = tr("Optimized");
+        break;
+    case ThermalMode::Performance:
+        name = tr("Ultra Performance");
+        break;
+    case ThermalMode::GMode:
+        name = tr("G-Mode");
+        break;
+    case ThermalMode::Custom:
+        name = tr("Custom");
+        break;
+    }
+    m_thermalChip->setText(name);
+}
+
+void DashboardPage::onPolicyChanged(const QString& policy) {
+    m_policyChip->setText(policy);
+}
+
+void DashboardPage::onChargingModeChanged(const QString& mode) {
+    m_chargeMode->setText(mode);
 }
 
 } // namespace dtb::ui

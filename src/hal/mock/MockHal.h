@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QHash>
+#include <memory>
+#include <vector>
 #include <QString>
 #include <QVector>
 
@@ -45,7 +47,8 @@ public:
 
     QVector<Write> writes;
 
-    HalSet makeSet(); // adapters forwarding to this object (not owned)
+    HalSet makeSet(); // adapters forwarding to this object (owned by the MockHal)
+    ~MockHal();
 
     void setScenario(Scenario s) { m_scenario = std::move(s); }
     // Drive the scenario from an internal timer (demo/Linux entry); the
@@ -65,6 +68,7 @@ public:
     QString currentChargeMode() const { return m_chargeMode; }
 
 private:
+    std::vector<std::shared_ptr<void>> m_setObjects; // keeps every makeSet adapter alive
     Scenario m_scenario;
     int m_tick = 0;
     QString m_chargeMode = "adaptive";

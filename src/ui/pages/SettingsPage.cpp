@@ -44,6 +44,16 @@ QWidget* SettingsPage::buildGeneralCard() {
     autostart->setChecked(m_config->loadAutostart());
     connect(autostart, &QPushButton::toggled, this, &SettingsPage::onAutostartToggled);
 
+    auto* minLabel = new QLabel(tr("Start minimized to tray"), box);
+    auto* startMin = new QPushButton(m_config->loadStartMinimized() ? tr("Enabled") : tr("Disabled"), box);
+    startMin->setObjectName(QStringLiteral("ghostButton"));
+    startMin->setCheckable(true);
+    startMin->setChecked(m_config->loadStartMinimized());
+    connect(startMin, &QPushButton::toggled, this, [this, startMin](bool on) {
+        startMin->setText(on ? tr("Enabled") : tr("Disabled"));
+        m_config->saveStartMinimized(on);
+    });
+
     auto* logLabel = new QLabel(tr("Log level"), box);
     m_logLevel = new QComboBox(box);
     m_logLevel->addItems({tr("Debug"), tr("Info"), tr("Warning"), tr("Error")});
@@ -56,10 +66,12 @@ QWidget* SettingsPage::buildGeneralCard() {
 
     form->addWidget(autostartLabel, 0, 0);
     form->addWidget(autostart, 0, 1);
-    form->addWidget(logLabel, 1, 0);
-    form->addWidget(m_logLevel, 1, 1);
-    form->addWidget(resetLabel, 2, 0);
-    form->addWidget(reset, 2, 1);
+    form->addWidget(minLabel, 1, 0);
+    form->addWidget(startMin, 1, 1);
+    form->addWidget(logLabel, 2, 0);
+    form->addWidget(m_logLevel, 2, 1);
+    form->addWidget(resetLabel, 3, 0);
+    form->addWidget(reset, 3, 1);
     form->setColumnStretch(2, 1);
     box->bodyLayout()->addLayout(form);
     return box;

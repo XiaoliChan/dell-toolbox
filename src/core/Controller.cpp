@@ -130,6 +130,15 @@ void Controller::adoptExternalProfile() {
 void Controller::tickOnce() {
     m_snapshot = readSnapshot();
     adoptExternalProfile();
+    // Charging mode polling every 3rd tick: WMI read, cheap enough at 1/3 Hz,
+    // and drives the tray bubble plus the Dashboard/Battery displays.
+    if (m_hal.charge && ++m_chargePollTick % 3 == 0) {
+        const QString mode = m_hal.charge->currentMode();
+        if (!mode.isEmpty() && mode != m_chargingMode) {
+            m_chargingMode = mode;
+            emit chargingModeChanged(mode);
+        }
+    }
     if (m_passive) { // monitor only: another app owns the hardware
         emit snapshotUpdated(m_snapshot);
         return;

@@ -110,6 +110,8 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
             return;
         m_pl1->setValue(m_profilesData[index].pl1W);
         m_pl2->setValue(m_profilesData[index].pl2W);
+        applyManual(); // selecting a profile activates it right away
+        updateActiveLabel();
     });
     connect(m_saveProfile, &QPushButton::clicked, this, [this] {
         const int i = m_profileCombo->currentIndex();
@@ -118,7 +120,9 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
         m_profilesData[i].pl1W = m_pl1->value();
         m_profilesData[i].pl2W = m_pl2->value();
         m_config->saveManualProfiles(m_profilesData);
+        refreshProfiles(m_profilesData[i].name);
         applyManual(); // records the override for the control loop
+        updateActiveLabel();
     });
 
     refreshProfiles(); // persisted profiles must populate the combo at startup
@@ -232,7 +236,25 @@ QWidget* PerformancePage::buildSlidersCard() {
         box);
     wrapLabel(caption); // a bare QLabel's min width is the full line: overflowed narrow windows
     layout->addWidget(caption);
+    m_activeLabel = new QLabel(box);
+    m_activeLabel->setObjectName(QStringLiteral("cardCaption"));
+    m_activeLabel->setStyleSheet(QStringLiteral("color:#4ade80;"));
+    layout->addWidget(m_activeLabel);
+    updateActiveLabel();
     return box;
+}
+
+void PerformancePage::updateActiveLabel() {
+    if (!m_activeLabel || !m_profileCombo)
+        return; // combo is created after the sliders card during construction
+    const int i = m_profileCombo->currentIndex();
+    if (i < 0 || i >= m_profilesData.size()) {
+        m_activeLabel->setText(tr("No active profile - targets come from the automatic loop"));
+        return;
+    }
+    m_activeLabel->setText(tr("Active: %1 (targets expire after %2 minutes)")
+                               .arg(m_profilesData[i].name)
+                               .arg(QString::number(m_controller->manual()->expiresSec / 60)));
 }
 
 void PerformancePage::applyManual() {

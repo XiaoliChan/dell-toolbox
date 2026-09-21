@@ -1,5 +1,7 @@
 #include "ui/Theme.h"
 
+#include <QAbstractItemView>
+#include <QComboBox>
 #include <QFont>
 
 namespace dtb::ui {
@@ -90,9 +92,9 @@ QComboBox::down-arrow {
     image: url(:/res/combo-arrow.png); width: 10px; height: 10px; margin-right: 8px;
 }
 QComboBox QAbstractItemView {
-    background: #17181d; border: 1px solid #2a2d35;
+    background: #17181d; border: 1px solid #2a2d35; border-radius: 8px;
     color: #e9ebee; selection-background-color: #4f8cff; selection-color: #ffffff;
-    outline: 0; padding: 0px;
+    outline: 0; padding: 2px;
 }
 QComboBox QAbstractItemView::item { min-height: 26px; padding: 4px 10px; border-radius: 6px; }
 QComboBox QAbstractItemView::item:hover { background: #23252c; }
@@ -120,6 +122,18 @@ QToolTip {
 }
 )");
     app.setStyleSheet(qss);
+}
+
+// Popup windows of existing combos: translucent background lets the rounded
+// view paint without the container's opaque black frame around it.
+void softenComboPopups(QWidget* root) {
+    const QList<QComboBox*> combos = root->findChildren<QComboBox*>();
+    for (QComboBox* combo : combos) {
+        if (QWidget* popup = combo->view()) {
+            popup->window()->setAttribute(Qt::WA_TranslucentBackground);
+            popup->setStyleSheet(QStringLiteral("background: transparent;"));
+        }
+    }
 }
 
 } // namespace dtb::ui

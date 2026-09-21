@@ -62,13 +62,23 @@ public:
 
 HalSet MockHal::makeSet() {
     HalSet set;
-    set.thermal = new MockThermal(this);
-    set.battery = new MockBattery(this);
-    set.gpu = new MockGpu(this);
-    set.load = new MockLoad(this);
-    set.charge = new MockCharge(this);
+    auto thermal = std::make_shared<MockThermal>(this);
+    auto battery = std::make_shared<MockBattery>(this);
+    auto gpu = std::make_shared<MockGpu>(this);
+    auto load = std::make_shared<MockLoad>(this);
+    auto charge = std::make_shared<MockCharge>(this);
+    // HalSet carries raw pointers; ownership stays here so repeated makeSet
+    // calls (one per test rig) never leak the adapters.
+    m_setObjects = {thermal, battery, gpu, load, charge};
+    set.thermal = thermal.get();
+    set.battery = battery.get();
+    set.gpu = gpu.get();
+    set.load = load.get();
+    set.charge = charge.get();
     return set;
 }
+
+MockHal::~MockHal() = default;
 
 void MockHal::enableAutoAdvance(int periodMs) {
     // MockHal is not a QObject; the timer lives for the app lifetime (the
