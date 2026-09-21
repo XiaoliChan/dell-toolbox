@@ -21,7 +21,7 @@ QString exePathBackslashes() {
     return QCoreApplication::applicationFilePath().replace(QLatin1Char('/'), QLatin1Char('\\'));
 }
 
-QString createError(const QProcess& proc) {
+QString createError(QProcess& proc) {
     const QString err = proc.readAllStandardError().trimmed();
     return err.isEmpty() ? QStringLiteral("exit code %1").arg(proc.exitCode()) : err;
 }
