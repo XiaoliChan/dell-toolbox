@@ -54,7 +54,7 @@ private:
     static constexpr int kModeCoolUstt = 0xA2;
     static constexpr int kModeBalancedLegacy = 0x97;
     static constexpr int kModeBalancedUstt = 0xA0;
-    static constexpr int kModePerformanceUstt = 0xA1;
+    static constexpr int kModePerformanceUstt = 0xA4; // USTT PERFORMANCE (0xA1 is the quiet balanced-perf table)
     static constexpr int kModeGMode = 0xAB;
 };
 

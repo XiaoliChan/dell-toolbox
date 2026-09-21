@@ -134,6 +134,13 @@ void Controller::adoptExternalProfile() {
         m_adoptStreak = 0;
         return;
     }
+    // Custom owns everything (fans + plan); the firmware always reports a
+    // table code that is never "Custom", so adopting would instantly yank
+    // the user out of Custom.
+    if (m_baseline.mode() == ThermalMode::Custom) {
+        m_adoptStreak = 0;
+        return;
+    }
     // The firmware readback is flaky right after writes (observed: a
     // different mode returned seconds after a successful write, flipping the
     // app off the user's choice). Adopt only a readback that is STABLE for 3
@@ -159,6 +166,11 @@ void Controller::adoptExternalProfile() {
 void Controller::tickOnce() {
     m_snapshot = readSnapshot();
     adoptExternalProfile();
+    // Keep the Dashboard plan chip live: re-read the ACTIVE plan name every
+    // 5 s (the chip used to update only on mode writes - stale after manual
+    // plan changes in Windows or the Performance page).
+    if (++m_planNameTick % 5 == 0)
+        refreshActivePlanName();
     // Charging mode polling every 3rd tick: WMI read, cheap enough at 1/3 Hz,
     // and drives the tray bubble plus the Dashboard/Battery displays.
     if (m_hal.charge && ++m_chargePollTick % 3 == 0) {
@@ -212,8 +224,12 @@ void Controller::handlePlanSync(ThermalMode mode) {
         return;
     m_planWanted = mode;
     m_planCreateTried = false;
-    if (!m_planBusy)
-        beginPlanChain();
+    m_planReportOnly = mode == ThermalMode::Custom; // the user picks the plan
+    if (m_planBusy) {
+        m_planQueuedRequest = true;
+        return;
+    }
+    beginPlanChain();
 }
 
 void Controller::beginPlanChain() {
@@ -311,6 +327,15 @@ void Controller::beginPlanChain() {
             return;
         }
         queryActivePlan([this, target, targetName, wantsHigh](const QString& active) {
+            if (m_planReportOnly) {
+                // Custom: no mapping - just name the currently active plan
+                // for the Dashboard chip (the user may have set any plan).
+                m_planActiveName = QString::compare(active, target, Qt::CaseInsensitive) == 0
+                                       ? (targetName.isEmpty() ? QStringLiteral("-") : targetName)
+                                       : QStringLiteral("-");
+                finishPlanChain();
+                return;
+            }
             // targetName is always found here (target came from this same
             // list); the stock-name fallback guards future lookup changes.
             const QString planName = targetName.isEmpty()
@@ -339,6 +364,47 @@ void Controller::finishPlanChain() {
         if (wantsHigh != m_planAppliedHigh)
             beginPlanChain();
     }
+}
+
+// Name-only refresh: /list + /getactivescheme -> m_planActiveName. Never
+// switches anything; a queued real request runs right after.
+void Controller::refreshActivePlanName() {
+    if (m_planBusy || !m_planSyncEnabled)
+        return;
+    m_planBusy = true;
+    auto* list = new QProcess(this);
+    connect(list, &QProcess::errorOccurred, this, [this, list](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) {
+            list->deleteLater();
+            m_planBusy = false;
+        }
+    });
+    connect(list, &QProcess::finished, this, [this, list] {
+        list->deleteLater();
+        const auto plans = parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()));
+        auto* act = new QProcess(this);
+        connect(act, &QProcess::finished, this, [this, act, plans] {
+            act->deleteLater();
+            const auto activePlans = parsePowerPlans(QString::fromLocal8Bit(act->readAllStandardOutput()));
+            const QString guid = activePlans.isEmpty() ? QString() : activePlans.first().guid;
+            for (const auto& plan : plans)
+                if (QString::compare(plan.guid, guid, Qt::CaseInsensitive) == 0)
+                    m_planActiveName = plan.name;
+            m_planBusy = false;
+            if (m_planQueuedRequest) {
+                m_planQueuedRequest = false;
+                beginPlanChain();
+            }
+        });
+        connect(act, &QProcess::errorOccurred, this, [this, act](QProcess::ProcessError e) {
+            if (e == QProcess::FailedToStart) {
+                act->deleteLater();
+                m_planBusy = false;
+            }
+        });
+        act->start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
+    });
+    list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
 }
 
 void Controller::queryActivePlan(const std::function<void(const QString&)>& done) {
@@ -392,8 +458,16 @@ void Controller::apply(const ControlTargets& t) {
         if (boost > it.value())
             it.value() = boost;
     }
-    // Mode changes are rare and safe: always written immediately.
-    if (targets.mode && targets.mode != m_lastModeWritten) {
+    // Mode changes are rare and safe: always written immediately. Custom is
+    // the exception: an APP-side concept (user-owned fans + plan), not a
+    // firmware table - writing 0x00 made the firmware fall back and the
+    // adoption loop yanked the UI back to Balanced.
+    if (targets.mode && *targets.mode == ThermalMode::Custom) {
+        if (m_lastModeWritten != ThermalMode::Custom) {
+            m_lastModeWritten = ThermalMode::Custom;
+            emit thermalModeChanged(ThermalMode::Custom, false);
+        }
+    } else if (targets.mode && targets.mode != m_lastModeWritten) {
         if (m_hal.thermal->setMode(*targets.mode)) {
             m_lastModeWritten = targets.mode;
             m_pendingModeWrite = false; // the queued user write has landed

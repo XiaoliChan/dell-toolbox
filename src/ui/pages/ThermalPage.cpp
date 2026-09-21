@@ -6,6 +6,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QFormLayout>
+#include <QProcess>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -13,6 +14,7 @@
 #include <cmath> // std::lround (debounce unit conversion)
 
 #include "core/Logger.h"
+#include "core/PowerCfg.h"
 #include "ui/Theme.h"
 #include "ui/widgets/Card.h"
 #include "ui/widgets/FanCurveEditor.h"
@@ -96,6 +98,25 @@ ThermalPage::ThermalPage(HalSet hal, Controller* controller, ConfigStore* config
     WheelGuard::apply(this);
 }
 
+void ThermalPage::refreshCustomPlans() {
+    if (!m_customPlanCombo)
+        return;
+    auto* list = new QProcess(this);
+    connect(list, &QProcess::finished, this, [this, list] {
+        list->deleteLater();
+        const auto plans = parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()));
+        const QSignalBlocker block(m_customPlanCombo);
+        m_customPlanCombo->clear();
+        for (const auto& plan : plans)
+            m_customPlanCombo->addItem(plan.name, plan.guid);
+    });
+    connect(list, &QProcess::errorOccurred, this, [list](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart)
+            list->deleteLater();
+    });
+    list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
+}
+
 void ThermalPage::onModeAdopted(ThermalMode mode, bool external) {
     Q_UNUSED(external);
     // External change (AWCC/DPM): re-sync the radios without re-triggering
@@ -129,6 +150,30 @@ void ThermalPage::addProfile(QButtonGroup* group, QVBoxLayout* layout, ThermalMo
         if (on)
             onModeSelectedWithMode(m);
     });
+    if (mode == ThermalMode::Custom) {
+        // Custom is the escape hatch: the user picks the Windows plan
+        // (system plans, including any custom ones) instead of a mapping.
+        auto* planRow = new QWidget(this);
+        auto* pl = new QHBoxLayout(planRow);
+        pl->setContentsMargins(24, 0, 0, 0);
+        pl->setSpacing(8);
+        auto* cap = new QLabel(tr("Windows plan"), planRow);
+        cap->setObjectName(QStringLiteral("statCaption"));
+        m_customPlanCombo = new QComboBox(planRow);
+        m_customPlanCombo->setMinimumWidth(220);
+        pl->addWidget(cap);
+        pl->addWidget(m_customPlanCombo);
+        pl->addStretch(1);
+        layout->addWidget(planRow);
+        // The combo only acts on USER changes (blockSignals during refresh).
+        connect(m_customPlanCombo, &QComboBox::activated, this, [this](int index) {
+            const QString guid = m_customPlanCombo->itemData(index).toString();
+            if (!guid.isEmpty())
+                QProcess::startDetached(QStringLiteral("powercfg"),
+                                        {QStringLiteral("/setactive"), guid});
+        });
+        refreshCustomPlans();
+    }
 }
 
 QWidget* ThermalPage::buildModeCard() {
@@ -153,20 +198,22 @@ QWidget* ThermalPage::buildModeCard() {
     m_modeGroup = new QButtonGroup(box);
     addProfile(m_modeGroup, layout, ThermalMode::Quiet, tr("Quiet"),
                tr("Processor and cooling fan speed are adjusted to reduce fan noise. May mean a higher "
-                  "system surface temperature and reduced performance."));
+                  "system surface temperature and reduced performance. Windows plan: Balanced."));
     addProfile(m_modeGroup, layout, ThermalMode::Cool, tr("Cool"),
                tr("Processor and cooling fan speed are adjusted to help maintain a cooler system "
-                  "surface temperature. May mean reduced performance and more noise."));
+                  "surface temperature. May mean reduced performance and more noise. Windows plan: Balanced."));
     addProfile(m_modeGroup, layout, ThermalMode::Balanced, tr("Optimized (Balanced)"),
                tr("The standard setting for cooling fan and processor heat management: a balance of "
-                  "performance, noise and temperature."));
+                  "performance, noise and temperature. Windows plan: Balanced."));
     addProfile(m_modeGroup, layout, ThermalMode::Performance, tr("Ultra Performance"),
                tr("Processor and cooling fan speed is increased for more performance. May mean higher "
-                  "system surface temperature and more noise."));
+                  "system surface temperature and more noise. Windows plan: High performance."));
     addProfile(m_modeGroup, layout, ThermalMode::GMode, tr("G-Mode"),
-               tr("Maximum fan speed and unlocked power state - the same toggle as AWCC's G logo."));
+               tr("Maximum fan speed and unlocked power state - the same toggle as AWCC's G logo. Windows "
+                  "plan: High performance."));
     addProfile(m_modeGroup, layout, ThermalMode::Custom, tr("Custom (fan curves)"),
-               tr("Your own per-fan temperature curves take over the fans."));
+               tr("Your own per-fan temperature curves take over the fans - and you pick the Windows plan "
+                  "yourself below."));
     return box;
 }
 

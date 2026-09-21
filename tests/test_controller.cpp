@@ -65,7 +65,8 @@ private slots:
         });
         rig.tick(10);
         QCOMPARE(countWrites(rig.hal.writes, MockHal::Write::Kind::FanPercent), 2); // both fans, first tick only
-        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::Custom));
+        // Custom is app-side: fans are written, the firmware table is NOT.
+        QVERIFY(!hasModeWrite(rig.hal.writes, ThermalMode::Custom));
         QCOMPARE(rig.ctrl->activePolicy(), QStringLiteral("baseline")); // dynamic is out of the chain until PL writes land
     }
 
@@ -97,7 +98,7 @@ private slots:
         rig.ctrl->manual()->set(t, rig.fakeNow);
         rig.tick(1);
         QCOMPARE(rig.ctrl->activePolicy(), QStringLiteral("manual"));
-        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::Custom));
+        QVERIFY(!hasModeWrite(rig.hal.writes, ThermalMode::Custom)); // app-side only
         bool saw90 = false;
         for (const auto& e : rig.hal.writes)
             if (e.kind == MockHal::Write::Kind::FanPercent && e.fan == 0x33 && e.value == 90)
@@ -109,7 +110,7 @@ private slots:
         Rig rig([](SystemSnapshot& s, int) {
             s.sensors.push_back({0x01, 50});
             s.sensors.push_back({0x06, 40});
-        });
+        }, ThermalMode::Balanced);
         int adopted = -1;
         bool lastExternal = false;
         connect(rig.ctrl.get(), &Controller::thermalModeChanged,
@@ -123,9 +124,9 @@ private slots:
         // the saved baseline (internal), then the adoption follows.
         rig.hal.externalMode = ThermalMode::GMode;
         rig.tick(1);
-        QCOMPARE(adopted, static_cast<int>(ThermalMode::Custom)); // startup write, internal
+        QCOMPARE(adopted, static_cast<int>(ThermalMode::Balanced)); // startup write, internal
         rig.tick(3); // inside the 5 s post-write adoption grace
-        QCOMPARE(adopted, static_cast<int>(ThermalMode::Custom)); // not adopted yet
+        QCOMPARE(adopted, static_cast<int>(ThermalMode::Balanced)); // not adopted yet
         rig.tick(4); // grace over + 3 stable ticks: adopted now
         QCOMPARE(adopted, static_cast<int>(ThermalMode::GMode));
         QVERIFY(lastExternal); // firmware-reported, not our own write
@@ -136,6 +137,15 @@ private slots:
         rig.hal.externalMode.reset();
         rig.tick(1);
         QCOMPARE(rig.cfg->loadMode(), ThermalMode::GMode);
+    }
+
+    void customBaselineNeverAdopts() {
+        // Custom owns fans + plan; firmware table codes are never "Custom",
+        // so the adoption loop must leave the user alone.
+        Rig rig(nullptr, ThermalMode::Custom);
+        rig.hal.externalMode = ThermalMode::GMode;
+        rig.tick(10);
+        QCOMPARE(rig.ctrl->baseline()->mode(), ThermalMode::Custom);
     }
 
     void emitsSnapshotSignal() {

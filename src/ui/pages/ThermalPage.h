@@ -42,6 +42,7 @@ private:
     QWidget* buildModeCard();
     QWidget* buildCurvesCard();
     QWidget* buildSceneCard();
+    void refreshCustomPlans();
     void addProfile(QButtonGroup* group, QVBoxLayout* layout, ThermalMode mode, const QString& title,
                     const QString& description);
 
@@ -54,6 +55,7 @@ private:
     QList<ThermalMode> m_modeValues;
     QWidget* m_curvesCard = nullptr;
     QComboBox* m_curveMode = nullptr;
+    QComboBox* m_customPlanCombo = nullptr; // Custom mode: user-picked Windows plan
     QList<QPair<FanId, FanCurveEditor*>> m_curveEditors;
     QComboBox* m_fanStyle = nullptr; // custom mode: Easy (boost) / Advanced (curves)
     QWidget* m_easyBody = nullptr;

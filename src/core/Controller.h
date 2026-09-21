@@ -63,6 +63,7 @@ public:
     void handlePlanSync(ThermalMode mode);
     void beginPlanChain();
     void finishPlanChain();
+    void refreshActivePlanName();
     void queryActivePlan(const std::function<void(const QString&)>& done);
     void setActivePlan(const QString& guid, const std::function<void(bool)>& done);
     // Thermal-profile -> power plan sync: G-Mode / Ultra Performance switch
@@ -148,6 +149,9 @@ private:
     QString m_planActiveName; // display name of the applied plan
     QString m_mintedHighGuid; // duplicatescheme copy minted this session (never mint twice)
     bool m_planCreateTried = false; // one duplicatescheme retry per request
+    bool m_planReportOnly = false; // Custom: name refresh, never switch
+    int m_planNameTick = 0; // periodic chip refresh
+    bool m_planQueuedRequest = false; // a real request waited for a name refresh
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone
     qint64 m_lastFanWriteMs = 0;
