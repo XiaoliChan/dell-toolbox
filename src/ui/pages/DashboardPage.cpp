@@ -311,11 +311,20 @@ void DashboardPage::onSnapshot(const SystemSnapshot& s) {
         break;
     }
     m_thermalChip->setText(thermalName);
-    QString policy = m_controller->activePolicy();
-    if (policy == QLatin1String("manual") && !m_controller->manualProfileName().isEmpty()
-        && m_controller->manual()->active(s.tsMs))
-        policy = m_controller->manualProfileName(); // the applied power profile
-    m_policyChip->setText(policy);
+    // Policy chip: who is driving the hardware right now.
+    //  - monitor mode (AWCC running): AWCC owns the writes, our loop is
+    //    read-only - say so instead of an empty name
+    //  - a named power profile applied and unexpired: show its name
+    //  - otherwise: the active policy-chain layer
+    if (m_controller->passive()) {
+        m_policyChip->setText(tr("AWCC (monitor)"));
+    } else {
+        QString policy = m_controller->activePolicy();
+        if (policy == QLatin1String("manual") && !m_controller->manualProfileName().isEmpty()
+            && m_controller->manual()->active(s.tsMs))
+            policy = m_controller->manualProfileName(); // the applied power profile
+        m_policyChip->setText(policy);
+    }
     // Charging mode: seeded by the controller's first poll (no signal), so
     // mirror it here; chargingModeChanged keeps it instant on real changes.
     const QString chargeKey = m_controller->chargingMode();
