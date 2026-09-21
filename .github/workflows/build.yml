@@ -107,7 +107,11 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "ISCC not found" }
           $ver = "${{ github.ref_name }}" -replace '^v', ''
-          & $iscc /DStageDir="stage\dell-toolbox" /DAppVersion=$ver res\installer.iss
+          # ISCC resolves relative /D paths against the .iss location (res/):
+          # pass absolute stage/dist paths from the workspace root.
+          $stageAbs = Join-Path (Get-Location).Path "stage\dell-toolbox"
+          $distAbs = Join-Path (Get-Location).Path "dist"
+          & $iscc "/DStageDir=$stageAbs" "/DAppVersion=$ver" "/O$distAbs" res\installer.iss
           if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
 
       - name: Launch smoke test (real admin build)
