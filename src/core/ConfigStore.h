@@ -52,6 +52,8 @@ public:
     // Coexist with official apps: auto-pause our writers while AWCC runs.
     bool loadStartMinimized();
     void saveStartMinimized(bool on);
+    bool loadPowerPlanSync(); // G-Mode also switches the Windows power plan
+    void savePowerPlanSync(bool on);
 
     bool loadAwccCoexist();
     void saveAwccCoexist(bool on);

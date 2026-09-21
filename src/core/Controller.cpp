@@ -1,12 +1,19 @@
 #include "core/Controller.h"
 
 #include <QDateTime>
+#include <QProcess>
+#include <QRegularExpression>
+
+#include <functional>
 
 #include "core/Logger.h"
 
 namespace dtb {
 
 namespace {
+// "GUID: <guid> (<name>)" line of powercfg /getactivescheme
+const QRegularExpression kActivePlanRe("GUID: ([0-9a-fA-F-]+)");
+
 // The firmware's profile readback can lag our own successful write by a tick
 // or two; ignore adoptions inside this window so a slow read does not revert
 // the mode we just applied.
@@ -69,6 +76,7 @@ void Controller::reloadFromConfig() {
     m_scene.setParams(m_cfg->loadSceneParams());
     m_failsafe.setParams(m_cfg->loadFailsafeParams());
     m_dynamic.setProfile(m_cfg->loadDynamicProfile());
+    m_planSyncEnabled = m_cfg->loadPowerPlanSync();
     m_lastModeWritten.reset(); // force re-apply of the reloaded mode
     m_pendingModeWrite = true;
     m_pendingWriteAttempts = 0;
@@ -171,6 +179,53 @@ void Controller::tickOnce() {
     }
 }
 
+// AWCC-aligned G-Mode power-plan behavior: on G-Mode engage, switch Windows
+// to the High Performance plan; on disengage, restore the plan that was
+// active before. All powercfg calls are asynchronous (they can take seconds
+// and must never block the UI thread).
+void Controller::handlePlanSync(ThermalMode mode) {
+    const bool gmode = mode == ThermalMode::GMode;
+    if (!m_planSyncEnabled || m_planBusy || gmode == m_planGmodeActive) {
+        m_planGmodeActive = gmode;
+        return;
+    }
+    m_planGmodeActive = gmode;
+    constexpr const char* kHighPerfGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+    if (gmode) {
+        m_planBusy = true;
+        queryActivePlan([this, kGuid = kHighPerfGuid](const QString& guid) {
+            if (!m_planSavedGuid.isEmpty())
+                m_planSavedGuid = guid; // remember only the first observed plan
+            setActivePlan(QString::fromLatin1(kGuid),
+                          [this] { m_planBusy = false; });
+        });
+    } else if (!m_planSavedGuid.isEmpty()) {
+        const QString restore = m_planSavedGuid;
+        m_planSavedGuid.clear();
+        m_planBusy = true;
+        setActivePlan(restore, [this] { m_planBusy = false; });
+    }
+}
+
+void Controller::queryActivePlan(const std::function<void(const QString&)>& done) {
+    auto* proc = new QProcess(this);
+    connect(proc, &QProcess::finished, this, [this, proc, done] {
+        proc->deleteLater();
+        const auto m = kActivePlanRe.match(QString::fromLocal8Bit(proc->readAllStandardOutput()));
+        done(m.hasMatch() ? m.captured(1) : QString());
+    });
+    proc->start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
+}
+
+void Controller::setActivePlan(const QString& guid, const std::function<void()>& done) {
+    auto* proc = new QProcess(this);
+    connect(proc, &QProcess::finished, this, [this, proc, done] {
+        proc->deleteLater();
+        done();
+    });
+    proc->start(QStringLiteral("powercfg"), {QStringLiteral("/setactive"), guid});
+}
+
 void Controller::apply(const ControlTargets& t) {
     if (!m_hal.thermal) {
         // Nothing to write through; targets still recorded in the snapshot path.
@@ -191,6 +246,7 @@ void Controller::apply(const ControlTargets& t) {
             m_pendingWriteAttempts = 0;
             m_lastModeWriteMs = m_snapshot.tsMs;
             m_failedMode.reset();
+            handlePlanSync(*targets.mode); // AWCC-aligned: G-Mode -> High Performance plan
             emit thermalModeChanged(*targets.mode, false); // UI + tray re-sync
         } else {
             m_failedMode = targets.mode; // retried next tick; UI shows the banner

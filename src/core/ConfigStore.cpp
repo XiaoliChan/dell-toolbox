@@ -200,6 +200,10 @@ bool ConfigStore::loadStartMinimized() { return m_s.value("dtb/startMinimized", 
 
 void ConfigStore::saveStartMinimized(bool on) { m_s.setValue("dtb/startMinimized", on); }
 
+bool ConfigStore::loadPowerPlanSync() { return m_s.value("dtb/powerPlanSync", true).toBool(); }
+
+void ConfigStore::savePowerPlanSync(bool on) { m_s.setValue("dtb/powerPlanSync", on); }
+
 bool ConfigStore::loadAwccCoexist() { return m_s.value("dtb/awccCoexist", true).toBool(); }
 
 void ConfigStore::saveAwccCoexist(bool on) { m_s.setValue("dtb/awccCoexist", on); }

@@ -3,6 +3,8 @@
 #include <QDateTime>
 #include <QObject>
 #include <QSet>
+
+#include <functional>
 #include <QTimer>
 
 #include <functional>
@@ -59,6 +61,14 @@ public:
     // Name of the manual power profile currently applied (empty = none).
     void setManualProfileName(const QString& name) { m_manualProfileName = name; }
     QString manualProfileName() const { return m_manualProfileName; }
+    void handlePlanSync(ThermalMode mode);
+    void queryActivePlan(const std::function<void(const QString&)>& done);
+    void setActivePlan(const QString& guid, const std::function<void()>& done);
+    // AWCC-aligned G-Mode behavior: engaging G-Mode also switches the Windows
+    // power plan to High Performance; leaving G-Mode restores the previous
+    // plan. Applies only when enabled in Settings.
+    void setPowerPlanSyncEnabled(bool on) { m_planSyncEnabled = on; }
+    bool powerPlanSyncEnabled() const { return m_planSyncEnabled; }
     // Full state reload after Settings "Reset to defaults": every running
     // object re-reads the (now default) config - mode, curves, boost floors,
     // scene, failsafe - otherwise stale in-memory values survive the reset.
@@ -125,6 +135,10 @@ private:
     QHash<FanId, int> m_fanBoost; // Easy mode: per-fan minimum speed
     QString m_chargingMode; // last known charging mode ("" until first read)
     QString m_manualProfileName; // active manual power profile (display)
+    bool m_planSyncEnabled = true;
+    bool m_planGmodeActive = false;
+    QString m_planSavedGuid; // plan to restore when G-Mode disengages
+    bool m_planBusy = false; // a powercfg query is in flight
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone
     qint64 m_lastFanWriteMs = 0;

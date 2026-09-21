@@ -62,6 +62,17 @@ QWidget* SettingsPage::buildGeneralCard() {
         startMin->setText(on ? tr("Enabled") : tr("Disabled"));
     });
 
+    auto* planSyncLabel = new QLabel(tr("G-Mode switches the Windows power plan"), box);
+    auto* planSync = new QPushButton(m_config->loadPowerPlanSync() ? tr("Enabled") : tr("Disabled"), box);
+    planSync->setObjectName(QStringLiteral("ghostButton"));
+    planSync->setCheckable(true);
+    planSync->setChecked(m_config->loadPowerPlanSync());
+    connect(planSync, &QPushButton::toggled, this, [this, planSync](bool on) {
+        planSync->setText(on ? tr("Enabled") : tr("Disabled"));
+        m_config->savePowerPlanSync(on);
+        m_controller->setPowerPlanSyncEnabled(on);
+    });
+
     auto* logLabel = new QLabel(tr("Log level"), box);
     m_logLevel = new QComboBox(box);
     m_logLevel->addItems({tr("Debug"), tr("Info"), tr("Warning"), tr("Error")});
@@ -76,10 +87,12 @@ QWidget* SettingsPage::buildGeneralCard() {
     form->addWidget(autostart, 0, 1);
     form->addWidget(minLabel, 1, 0);
     form->addWidget(startMin, 1, 1);
-    form->addWidget(logLabel, 2, 0);
-    form->addWidget(m_logLevel, 2, 1);
-    form->addWidget(resetLabel, 3, 0);
-    form->addWidget(reset, 3, 1);
+    form->addWidget(planSyncLabel, 2, 0);
+    form->addWidget(planSync, 2, 1);
+    form->addWidget(logLabel, 3, 0);
+    form->addWidget(m_logLevel, 3, 1);
+    form->addWidget(resetLabel, 4, 0);
+    form->addWidget(reset, 4, 1);
     form->setColumnStretch(2, 1);
     box->bodyLayout()->addLayout(form);
     return box;
