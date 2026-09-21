@@ -66,9 +66,9 @@ public:
     void finishPlanChain();
     void queryActivePlan(const std::function<void(const QString&)>& done);
     void setActivePlan(const QString& guid, const std::function<void()>& done);
-    // AWCC-aligned G-Mode behavior: engaging G-Mode also switches the Windows
-    // power plan to High Performance; leaving G-Mode restores the previous
-    // plan. Applies only when enabled in Settings.
+    // Thermal-profile -> power plan sync: G-Mode / Ultra Performance switch
+    // Windows to the High Performance plan, every other profile to Balanced.
+    // Applies only when enabled in Settings.
     void setPowerPlanSyncEnabled(bool on) { m_planSyncEnabled = on; }
     bool powerPlanSyncEnabled() const { return m_planSyncEnabled; }
     // Overrides monitor mode: write even when AWCC processes are detected.

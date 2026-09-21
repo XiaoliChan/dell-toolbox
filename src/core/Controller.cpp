@@ -197,25 +197,30 @@ void Controller::beginPlanChain() {
     const bool wantsHigh = m_planWanted == ThermalMode::GMode || m_planWanted == ThermalMode::Performance;
     m_planAppliedHigh = wantsHigh;
     auto* list = new QProcess(this);
+    // A failed start never emits finished(); release the gate or plan sync
+    // stays dead for the rest of the session.
+    connect(list, &QProcess::errorOccurred, this, [this, list](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            list->deleteLater();
+            finishPlanChain();
+        }
+    });
     connect(list, &QProcess::finished, this, [this, list, wantsHigh] {
         list->deleteLater();
         QString target;
-        const QStringList lines = QString::fromLocal8Bit(list->readAllStandardOutput())
-                                      .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-        for (const QString& line : lines) {
-            const auto m = kActivePlanRe.match(line.trimmed());
-            if (!m.hasMatch())
-                continue;
-            const QString& guid = m.captured(1);
-            const QString& name = m.captured(2);
-            const bool high = guid == QLatin1String("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")
-                              || name.contains(QLatin1String("high"), Qt::CaseInsensitive)
-                              || name.contains(QString::fromUtf8("高性能"));
-            const bool balanced = guid == QLatin1String("381b4222-f694-41f0-9685-ff5bb260df2e")
-                                  || name.contains(QLatin1String("balanc"), Qt::CaseInsensitive)
-                                  || name.contains(QString::fromUtf8("平衡"));
-            if (wantsHigh == high && (high || balanced))
-                target = guid;
+        for (const PowerPlanEntry& plan : parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()))) {
+            // powercfg's GUID casing is not guaranteed: match the well-known
+            // template GUIDs case-insensitively or the fallback silently dies.
+            const bool high = plan.guid.compare(QLatin1String("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"),
+                                                Qt::CaseInsensitive) == 0
+                              || plan.name.contains(QLatin1String("high"), Qt::CaseInsensitive)
+                              || plan.name.contains(QString::fromUtf8("高性能"));
+            const bool balanced = plan.guid.compare(QLatin1String("381b4222-f694-41f0-9685-ff5bb260df2e"),
+                                                    Qt::CaseInsensitive) == 0
+                                  || plan.name.contains(QLatin1String("balanc"), Qt::CaseInsensitive)
+                                  || plan.name.contains(QString::fromUtf8("平衡"));
+            if (wantsHigh ? high : balanced)
+                target = plan.guid;
         }
         if (target.isEmpty()) {
             dtbLog(info) << "plan sync: no matching plan (wantsHigh" << wantsHigh << ")";
@@ -245,16 +250,28 @@ void Controller::finishPlanChain() {
 
 void Controller::queryActivePlan(const std::function<void(const QString&)>& done) {
     auto* proc = new QProcess(this);
+    connect(proc, &QProcess::errorOccurred, this, [this, proc, done](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            proc->deleteLater();
+            done(QString()); // active plan unknown; caller proceeds without it
+        }
+    });
     connect(proc, &QProcess::finished, this, [this, proc, done] {
         proc->deleteLater();
-        const auto m = kActivePlanRe.match(QString::fromLocal8Bit(proc->readAllStandardOutput()));
-        done(m.hasMatch() ? m.captured(1) : QString());
+        const auto plans = parsePowerPlans(QString::fromLocal8Bit(proc->readAllStandardOutput()));
+        done(plans.isEmpty() ? QString() : plans.first().guid);
     });
     proc->start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
 }
 
 void Controller::setActivePlan(const QString& guid, const std::function<void()>& done) {
     auto* proc = new QProcess(this);
+    connect(proc, &QProcess::errorOccurred, this, [this, proc, done](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            proc->deleteLater();
+            done(); // nothing was switched; still release the busy gate
+        }
+    });
     connect(proc, &QProcess::finished, this, [this, proc, done] {
         proc->deleteLater();
         done();

@@ -11,11 +11,11 @@
 
 **读取侧操作码(2026-09-20 补充,第二证据源:Linux 内核 `alienware-wmi` 驱动)**:
 - `Thermal_Information` op `0x0B`、arg=0 → **读当前激活模式**,返回模式码全表(枚举 `awcc_thermal_profile`):0x00 Custom,0x96/0xA3 Quiet,0x97/0xA0 Balanced,0x98/0x99/0xA1/0xA4 Performance,0xA2 Cool,0xA5 低功耗,**0xAB G-Mode**。内核 `platform_profile_get` 即用此读 —— 这是唯一能看到 AWCC 所设 G-Mode 的读路径(DA 通道 0-8 表达不了)
-- `GameShiftStatus`(方法 37/0x25):op `0x01` = **切换(toggle,读路径严禁发)**,op `0x02` = **纯读取**(0 = 关,1 = G-Mode 开)
+- `GameShiftStatus`(方法 37/0x25):op `0x02` = **纯读取**(0 = 关,1 = G-Mode 开;**唯一允许的用法**)。op `0x01`/`0x00` 写语义存疑:内核标 `0x01` 为 toggle,tr1xem/AWCC 称 `0x01`=置位/`0x00`=清除,真机 2026-09-21 实测 **`0x00` 清不掉闩锁、`0x01` 却会置位** —— 卡死的闩锁正是"切走又弹回 G-Mode"的根源,写路径禁用整个 GameShiftStatus
 - `Thermal_Control` op `0x01` = 激活模式(与现有写路径一致)
 
 dell-toolbox 的 `hal/win/WinThermalHAL` 已逐条镜像这些常量,读回顺序:AWCC op 0x0B → GameShiftStatus GET → DA 通道兜底。
-- **G-Mode 是 EC 闩锁(真机实锤 2026-09-21)**:闩锁开着时写其他模式字节,EC 几秒内把 0xAB 压回——表现为"切走又弹回 G-Mode"+外部采纳气泡,与 AWCC 是否安装无关。正确离开方式 = 先 GameShiftStatus toggle 关闩锁再写目标模式;进入 G-Mode 反之。内核 alienware-wmi 的 platform_profile set 即此逻辑
+- **G-Mode 是 EC 闩锁(真机实锤 2026-09-21)**:闩锁开着时写其他模式字节,EC 几秒内把 0xAB 压回——表现为"切走又弹回 G-Mode"+外部采纳气泡,与 AWCC 是否安装无关。~~先 GameShiftStatus toggle 关闩锁再写目标模式~~(2026-09-21 修订:**此法在本机适得其反**——GameShiftStatus 写路径留下的闩锁 `0x00` 清不掉,EC 反复把 0xAB 压回)。正确做法 = **只写模式字节**(写 0xAB 进 G-Mode,写其他字节即离开,tcc-g15 语义、真机验证通过);GameShiftStatus 保持只读(op `0x02`,作读回兜底)
 
 ## 2.【实证】OC Controls 侧的热边界
 

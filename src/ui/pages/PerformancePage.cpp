@@ -10,6 +10,7 @@
 #include <QSlider>
 #include <QVBoxLayout>
 
+#include "core/PowerCfg.h"
 #include "ui/Theme.h"
 #include "ui/widgets/Card.h"
 #include "ui/widgets/WheelGuard.h"
@@ -24,8 +25,6 @@ constexpr int kPl2MinW = 35;
 constexpr int kPl2MaxW = 80;
 constexpr int kGpuPptMinW = 60;
 constexpr int kGpuPptMaxW = 115;
-// "GUID: <guid> (<name>)" lines of powercfg /list and /getactivescheme
-const QRegularExpression kPlanRe("GUID: ([0-9a-fA-F-]+)\\s+\\(([^)]+)\\)");
 } // namespace
 
 PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore* config, QWidget* parent)
@@ -193,22 +192,13 @@ QWidget* PerformancePage::buildPowerPlanCard() {
         auto* list = new QProcess(this);
         connect(list, &QProcess::finished, this, [this, list] {
             list->deleteLater();
-            struct Plan {
-                QString guid, name;
-            };
-            QList<Plan> plans;
-            const QStringList lines = QString::fromLocal8Bit(list->readAllStandardOutput())
-                                          .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-            for (const QString& line : lines) {
-                const auto m = kPlanRe.match(line.trimmed());
-                if (m.hasMatch())
-                    plans.append({m.captured(1), m.captured(2)});
-            }
+            const QVector<PowerPlanEntry> plans =
+                parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()));
             auto* active = new QProcess(this);
             connect(active, &QProcess::finished, this, [this, active, plans] {
                 active->deleteLater();
-                const auto am = kPlanRe.match(QString::fromLocal8Bit(active->readAllStandardOutput()));
-                const QString activeGuid = am.hasMatch() ? am.captured(1) : QString();
+                const auto activePlans = parsePowerPlans(QString::fromLocal8Bit(active->readAllStandardOutput()));
+                const QString activeGuid = activePlans.isEmpty() ? QString() : activePlans.first().guid;
                 const QSignalBlocker block(m_planCombo);
                 m_planCombo->clear();
                 int idx = -1;
