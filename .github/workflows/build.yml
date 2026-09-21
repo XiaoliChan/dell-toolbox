@@ -1,4 +1,4 @@
-name: build
+name: windows build
 
 # Actions minutes are metered on private repos: build only release tags and
 # manual dispatches. Everyday verification runs locally (scripts/build-local.ps1
@@ -134,13 +134,17 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$env:GITHUB_REF_NAME" dell-toolbox-windows-x64.zip `
-            --title "Dell Toolbox $env:GITHUB_REF_NAME" --generate-notes `
-            --notes "Portable build: unzip and run dell-toolbox.exe (administrator)." `
-            --clobber 2>$null;
-          if ($LASTEXITCODE -ne 0) {
-            gh release upload "$env:GITHUB_REF_NAME" dell-toolbox-windows-x64.zip --clobber
+          $tag = $env:GITHUB_REF_NAME
+          $files = @("dell-toolbox-windows-x64.zip")
+          $setup = Get-ChildItem "dist\DellToolbox-*-setup.exe" -ErrorAction SilentlyContinue
+          if ($setup) { $files += $setup.FullName }
+          if (gh release view $tag 2>$null) {
+            gh release upload $tag @files --clobber
+          } else {
+            gh release create $tag @files --title "Dell Toolbox $tag" --generate-notes `
+              --notes "Portable zip: unzip and run dell-toolbox.exe (administrator). The -setup.exe is an optional installer."
           }
 
       - uses: actions/upload-artifact@v4
