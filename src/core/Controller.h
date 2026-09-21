@@ -62,6 +62,8 @@ public:
     void setManualProfileName(const QString& name) { m_manualProfileName = name; }
     QString manualProfileName() const { return m_manualProfileName; }
     void handlePlanSync(ThermalMode mode);
+    void beginPlanChain();
+    void finishPlanChain();
     void queryActivePlan(const std::function<void(const QString&)>& done);
     void setActivePlan(const QString& guid, const std::function<void()>& done);
     // AWCC-aligned G-Mode behavior: engaging G-Mode also switches the Windows
@@ -139,7 +141,9 @@ private:
     QString m_manualProfileName; // active manual power profile (display)
     bool m_planSyncEnabled = true;
     bool m_forceControl = false;
-    bool m_planBusy = false; // a powercfg query is in flight
+    bool m_planBusy = false; // a powercfg chain is in flight
+    ThermalMode m_planWanted = ThermalMode::Balanced; // latest request
+    bool m_planAppliedHigh = false; // what the last completed chain applied
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone
     qint64 m_lastFanWriteMs = 0;

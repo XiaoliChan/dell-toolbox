@@ -2,18 +2,15 @@
 
 #include <QDateTime>
 #include <QProcess>
-#include <QRegularExpression>
 
 #include <functional>
 
 #include "core/Logger.h"
+#include "core/PowerCfg.h"
 
 namespace dtb {
 
 namespace {
-// "GUID: <guid> (<name>)" line of powercfg /getactivescheme
-const QRegularExpression kActivePlanRe("GUID: ([0-9a-fA-F-]+)\\s+\\(([^)]+)\\)");
-
 // The firmware's profile readback can lag our own successful write by a tick
 // or two; ignore adoptions inside this window so a slow read does not revert
 // the mode we just applied.
@@ -182,14 +179,23 @@ void Controller::tickOnce() {
 // Thermal profile -> Windows power plan mapping (the published usage table):
 //   G-Mode / Ultra Performance -> High Performance
 //   Optimized / Quiet / Cool / Custom -> Balanced
-// Plans are looked up from powercfg /list by template GUID or localized
-// name - instance GUIDs are machine-specific (duplicatescheme mints new
-// ones), so nothing is hardcoded. All calls asynchronous.
+// Plans are resolved from powercfg /list by template GUID or localized name
+// (instance GUIDs are machine-specific), all calls asynchronous. A request
+// arriving while a chain is in flight is REMEMBERED and re-applied when the
+// chain completes - previously it was dropped, so a quick G-Mode ->
+// Balanced -> G-Mode sequence left the plan stuck on Balanced.
 void Controller::handlePlanSync(ThermalMode mode) {
-    if (!m_planSyncEnabled || m_planBusy)
+    if (!m_planSyncEnabled)
         return;
-    const bool wantsHigh = mode == ThermalMode::GMode || mode == ThermalMode::Performance;
+    m_planWanted = mode;
+    if (!m_planBusy)
+        beginPlanChain();
+}
+
+void Controller::beginPlanChain() {
     m_planBusy = true;
+    const bool wantsHigh = m_planWanted == ThermalMode::GMode || m_planWanted == ThermalMode::Performance;
+    m_planAppliedHigh = wantsHigh;
     auto* list = new QProcess(this);
     connect(list, &QProcess::finished, this, [this, list, wantsHigh] {
         list->deleteLater();
@@ -213,18 +219,28 @@ void Controller::handlePlanSync(ThermalMode mode) {
         }
         if (target.isEmpty()) {
             dtbLog(info) << "plan sync: no matching plan (wantsHigh" << wantsHigh << ")";
-            m_planBusy = false;
+            finishPlanChain();
             return;
         }
         queryActivePlan([this, target](const QString& active) {
             if (active == target) {
-                m_planBusy = false;
+                finishPlanChain();
                 return;
             }
-            setActivePlan(target, [this] { m_planBusy = false; });
+            setActivePlan(target, [this] { finishPlanChain(); });
         });
     });
     list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
+}
+
+void Controller::finishPlanChain() {
+    m_planBusy = false;
+    // Honor a newer request that arrived while this chain was in flight.
+    if (m_planSyncEnabled) {
+        const bool wantsHigh = m_planWanted == ThermalMode::GMode || m_planWanted == ThermalMode::Performance;
+        if (wantsHigh != m_planAppliedHigh)
+            beginPlanChain();
+    }
 }
 
 void Controller::queryActivePlan(const std::function<void(const QString&)>& done) {

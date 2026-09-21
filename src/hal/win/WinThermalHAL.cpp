@@ -145,52 +145,17 @@ bool WinThermalHAL::applyModeByte(int modeByte) {
     return ok;
 }
 
-// Game Shift is an EC LATCH on G-series, not just a thermal mode byte:
-// while it latches, the EC re-asserts 0xAB seconds after anything else is
-// written (the observed bounce). The kernel alienware-wmi driver mirrors
-// this: read the latch (GameShiftStatus op 0x02) and TOGGLE it (op 0x01)
-// whenever the target mode's G-state differs, then apply the mode byte.
-std::optional<int> WinThermalHAL::gameShiftState() {
-    // low byte of the reply: 1 = G-Mode latched, 0 = off; invalid on machines
-    // without game shift (callers treat nullopt as "no latch support")
-    return m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftGet);
-}
-
-// Set the game shift latch to `want` (1 = G-Mode on, 0 = off).
-//
-// Semantics per tr1xem/AWCC (the Linux implementation validated on many
-// G-series machines): GameShiftStatus op 0x01 ENGAGES the latch and op 0x00
-// DISENGAGES it - a direct state set. The kernel driver's TOGGLE label for
-// op 0x01 is a misreading: treating it as a toggle left the latch engaged
-// when leaving G-Mode and the EC re-asserted 0xAB over the new mode write
-// (the "bounces back to G-Mode" symptom). Verified read-back via op 0x02
-// when the firmware supports it.
-bool WinThermalHAL::setGameShift(int want) {
-    const int op = want ? kGameShiftOn : kGameShiftOff;
-    const auto r = m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", op);
-    if (!r)
-        return false;
-    if (const auto state = gameShiftState(); state && *state >= 0 && *state <= 1 && *state != want)
-        dtbLog(warn) << "game shift: wanted" << want << "but reads" << *state;
-    return true;
-}
-
 bool WinThermalHAL::setMode(ThermalMode mode) {
     if (!m_wmi.valid())
         return false;
 
-    // Leave/enter the G-Mode latch first, or the EC fights the write.
-    // Decision input is the CURRENT THERMAL MODE (op 0x0B - reliably
-    // readable), exactly like tr1xem/AWCC: the latch read (op 0x02) may
-    // return shapes we do not recognize, and gating on it silently skipped
-    // the disengage (mode bounced back to G-Mode).
-    if (const auto current = readCurrentProfile()) {
-        if (*current == ThermalMode::GMode && mode != ThermalMode::GMode)
-            setGameShift(0); // disengage, or the EC re-asserts 0xAB later
-        else if (*current != ThermalMode::GMode && mode == ThermalMode::GMode)
-            setGameShift(1); // engage
-    }
-
+    // Plain mode writes only - tcc-g15 semantics, real-machine proven: this
+    // G3 3590 switches Balanced <-> G-Mode by writing the profile byte and
+    // nothing else. GameShiftStatus in the WRITE path actively hurts here:
+    // op 0x01 engages a latch that op 0x00 does not release on this
+    // firmware, and the stuck latch made the EC re-assert 0xAB over every
+    // later mode write (the bounce-back bug). GameShiftStatus stays
+    // read-only (op 0x02, readCurrentProfile fallback).
 
     // Balanced has a legacy (0x97) and a USTT (0xA0) encoding; probe USTT once
     // and remember which the machine accepts (tcc-g15 semantics).
