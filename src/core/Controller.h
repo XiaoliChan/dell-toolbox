@@ -56,6 +56,9 @@ public:
         // (release to curve) must reach the hardware even at the same value
     }
     int fanBoost(FanId fan) const { return m_fanBoost.value(fan, 0); }
+    // Name of the manual power profile currently applied (empty = none).
+    void setManualProfileName(const QString& name) { m_manualProfileName = name; }
+    QString manualProfileName() const { return m_manualProfileName; }
     // Full state reload after Settings "Reset to defaults": every running
     // object re-reads the (now default) config - mode, curves, boost floors,
     // scene, failsafe - otherwise stale in-memory values survive the reset.
@@ -121,6 +124,7 @@ private:
     QHash<FanId, int> m_lastFanPercent;
     QHash<FanId, int> m_fanBoost; // Easy mode: per-fan minimum speed
     QString m_chargingMode; // last known charging mode ("" until first read)
+    QString m_manualProfileName; // active manual power profile (display)
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone
     qint64 m_lastFanWriteMs = 0;

@@ -300,6 +300,9 @@ void PerformancePage::applyManual() {
     if (m_gpuPpt->isEnabled())
         t.gpuPptW = m_gpuPpt->value();
     m_controller->manual()->set(t, QDateTime::currentMSecsSinceEpoch());
+    const int i = m_profileList->currentRow();
+    m_controller->setManualProfileName(i >= 0 && i < m_profilesData.size() ? m_profilesData[i].name
+                                                                           : tr("Custom"));
 }
 
 } // namespace dtb::ui

@@ -349,9 +349,13 @@ QWidget* ThermalPage::buildSceneCard() {
     m_gpuEnter = new ClickSpinBox(m_sceneBody);
     m_gpuEnter->setRange(20, 100);
     m_gpuEnter->setValue(p.gpuEnterThreshold);
+    m_gpuEnter->setMaximumWidth(150);
+    m_gpuEnter->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_gpuExit = new ClickSpinBox(m_sceneBody);
     m_gpuExit->setRange(10, 95);
     m_gpuExit->setValue(p.gpuExitThreshold);
+    m_gpuExit->setMaximumWidth(150);
+    m_gpuExit->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_processes = new QTextEdit(m_sceneBody);
     m_processes->setPlaceholderText(tr("game.exe\nlauncher.exe\n(one per line)"));
     m_processes->setPlainText(p.gameProcesses.join(QLatin1Char('\n')));
@@ -366,8 +370,11 @@ QWidget* ThermalPage::buildSceneCard() {
         auto* spin = new ClickSpinBox(rowW);
         spin->setRange(1, 600);
         spin->setValue(qBound(1, seconds, 600));
+        spin->setMaximumWidth(110);
+        spin->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         auto* unit = new QComboBox(rowW);
         unit->addItems({QStringLiteral("s"), QStringLiteral("min")});
+        unit->setMaximumWidth(90);
         unit->setProperty("wasMin", false);
         hl->addWidget(spin, 1);
         hl->addWidget(unit);

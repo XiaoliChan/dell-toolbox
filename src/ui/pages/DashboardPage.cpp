@@ -311,7 +311,11 @@ void DashboardPage::onSnapshot(const SystemSnapshot& s) {
         break;
     }
     m_thermalChip->setText(thermalName);
-    m_policyChip->setText(m_controller->activePolicy());
+    QString policy = m_controller->activePolicy();
+    if (policy == QLatin1String("manual") && !m_controller->manualProfileName().isEmpty()
+        && m_controller->manual()->active(s.tsMs))
+        policy = m_controller->manualProfileName(); // the applied power profile
+    m_policyChip->setText(policy);
     // Charging mode: seeded by the controller's first poll (no signal), so
     // mirror it here; chargingModeChanged keeps it instant on real changes.
     const QString chargeKey = m_controller->chargingMode();
