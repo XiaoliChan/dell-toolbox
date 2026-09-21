@@ -194,8 +194,10 @@ void Controller::handlePlanSync(ThermalMode mode) {
     if (gmode) {
         m_planBusy = true;
         queryActivePlan([this, kGuid = kHighPerfGuid](const QString& guid) {
-            if (!m_planSavedGuid.isEmpty())
-                m_planSavedGuid = guid; // remember only the first observed plan
+            // Remember the pre-G-Mode plan once (empty = nothing saved yet);
+            // this is what gets restored when G-Mode disengages.
+            if (!guid.isEmpty() && m_planSavedGuid.isEmpty())
+                m_planSavedGuid = guid;
             setActivePlan(QString::fromLatin1(kGuid),
                           [this] { m_planBusy = false; });
         });
