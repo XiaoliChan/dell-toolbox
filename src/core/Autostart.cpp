@@ -46,8 +46,9 @@ bool createViaXml(const QString& xml) {
     if (!out.open(QIODevice::WriteOnly))
         return false;
     // UTF-16 LE bytes + BOM; the declaration inside says UTF-16 to match.
-    const QString bom = QString(QChar(0xFEFF));
-    out.write(QString(bom + xml).toUtf16());
+    const QString text = QChar(0xFEFF) + xml; // BOM + body
+    out.write(reinterpret_cast<const char*>(text.constData()),
+              int(text.size() * 2)); // UTF-16 LE code units
     out.close();
     QProcess create;
     create.start(QStringLiteral("schtasks"),
