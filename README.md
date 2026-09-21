@@ -22,6 +22,14 @@ Other AWCC-capable Dell G / Alienware machines likely work - check with
   (per-fan minimum speed) and Advanced (temperature/fan curve editor) styles,
   with reset to defaults
 - Failsafe: sustained CPU 95 °C / GPU 85 °C forces G-Mode regardless of mode
+- Windows power plan follows the thermal profile (toggleable):
+
+| Scenario | Thermal profile | Windows plan |
+|---|---|---|
+| Gaming / full power | G-Mode | High Performance |
+| Sustained heavy load | Ultra Performance | High Performance |
+| Everyday use | Optimized | Balanced |
+| Quiet / cool | Quiet or Cool | Balanced |
 
 **Performance**
 - Windows power plan switching (powercfg)

@@ -12,7 +12,7 @@ namespace dtb {
 
 namespace {
 // "GUID: <guid> (<name>)" line of powercfg /getactivescheme
-const QRegularExpression kActivePlanRe("GUID: ([0-9a-fA-F-]+)");
+const QRegularExpression kActivePlanRe("GUID: ([0-9a-fA-F-]+)\\s+\\(([^)]+)\\)");
 
 // The firmware's profile readback can lag our own successful write by a tick
 // or two; ignore adoptions inside this window so a slow read does not revert
@@ -179,34 +179,52 @@ void Controller::tickOnce() {
     }
 }
 
-// AWCC-aligned G-Mode power-plan behavior: on G-Mode engage, switch Windows
-// to the High Performance plan; on disengage, restore the plan that was
-// active before. All powercfg calls are asynchronous (they can take seconds
-// and must never block the UI thread).
+// Thermal profile -> Windows power plan mapping (the published usage table):
+//   G-Mode / Ultra Performance -> High Performance
+//   Optimized / Quiet / Cool / Custom -> Balanced
+// Plans are looked up from powercfg /list by template GUID or localized
+// name - instance GUIDs are machine-specific (duplicatescheme mints new
+// ones), so nothing is hardcoded. All calls asynchronous.
 void Controller::handlePlanSync(ThermalMode mode) {
-    const bool gmode = mode == ThermalMode::GMode;
-    if (!m_planSyncEnabled || m_planBusy || gmode == m_planGmodeActive) {
-        m_planGmodeActive = gmode;
+    if (!m_planSyncEnabled || m_planBusy)
         return;
-    }
-    m_planGmodeActive = gmode;
-    constexpr const char* kHighPerfGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
-    if (gmode) {
-        m_planBusy = true;
-        queryActivePlan([this, kGuid = kHighPerfGuid](const QString& guid) {
-            // Remember the pre-G-Mode plan once (empty = nothing saved yet);
-            // this is what gets restored when G-Mode disengages.
-            if (!guid.isEmpty() && m_planSavedGuid.isEmpty())
-                m_planSavedGuid = guid;
-            setActivePlan(QString::fromLatin1(kGuid),
-                          [this] { m_planBusy = false; });
+    const bool wantsHigh = mode == ThermalMode::GMode || mode == ThermalMode::Performance;
+    m_planBusy = true;
+    auto* list = new QProcess(this);
+    connect(list, &QProcess::finished, this, [this, list, wantsHigh] {
+        list->deleteLater();
+        QString target;
+        const QStringList lines = QString::fromLocal8Bit(list->readAllStandardOutput())
+                                      .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString& line : lines) {
+            const auto m = kActivePlanRe.match(line.trimmed());
+            if (!m.hasMatch())
+                continue;
+            const QString& guid = m.captured(1);
+            const QString& name = m.captured(2);
+            const bool high = guid == QLatin1String("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")
+                              || name.contains(QLatin1String("high"), Qt::CaseInsensitive)
+                              || name.contains(QString::fromUtf8("高性能"));
+            const bool balanced = guid == QLatin1String("381b4222-f694-41f0-9685-ff5bb260df2e")
+                                  || name.contains(QLatin1String("balanc"), Qt::CaseInsensitive)
+                                  || name.contains(QString::fromUtf8("平衡"));
+            if (wantsHigh == high && (high || balanced))
+                target = guid;
+        }
+        if (target.isEmpty()) {
+            dtbLog(info) << "plan sync: no matching plan (wantsHigh" << wantsHigh << ")";
+            m_planBusy = false;
+            return;
+        }
+        queryActivePlan([this, target](const QString& active) {
+            if (active == target) {
+                m_planBusy = false;
+                return;
+            }
+            setActivePlan(target, [this] { m_planBusy = false; });
         });
-    } else if (!m_planSavedGuid.isEmpty()) {
-        const QString restore = m_planSavedGuid;
-        m_planSavedGuid.clear();
-        m_planBusy = true;
-        setActivePlan(restore, [this] { m_planBusy = false; });
-    }
+    });
+    list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
 }
 
 void Controller::queryActivePlan(const std::function<void(const QString&)>& done) {

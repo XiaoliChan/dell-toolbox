@@ -156,25 +156,23 @@ std::optional<int> WinThermalHAL::gameShiftState() {
     return m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftGet);
 }
 
-// Set the game shift latch to `want` (1 = G-Mode on, 0 = off). The toggle op
-// is blind on this firmware and may not flip the latch every time - verify
-// after each toggle and retry (the "bounces back to G-Mode later" symptom
-// came from an unverified toggle that never actually landed).
+// Set the game shift latch to `want` (1 = G-Mode on, 0 = off).
+//
+// Semantics per tr1xem/AWCC (the Linux implementation validated on many
+// G-series machines): GameShiftStatus op 0x01 ENGAGES the latch and op 0x00
+// DISENGAGES it - a direct state set. The kernel driver's TOGGLE label for
+// op 0x01 is a misreading: treating it as a toggle left the latch engaged
+// when leaving G-Mode and the EC re-asserted 0xAB over the new mode write
+// (the "bounces back to G-Mode" symptom). Verified read-back via op 0x02
+// when the firmware supports it.
 bool WinThermalHAL::setGameShift(int want) {
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        const auto state = gameShiftState();
-        if (!state || *state < 0 || *state > 1)
-            return true; // no game shift support: nothing to latch
-        if (*state == want)
-            return true;
-        dtbLog(warn) << "game shift:" << *state << "-> toggle -> want" << want;
-        const auto r = m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftToggle);
-        if (!r)
-            return false;
-    }
-    const auto state = gameShiftState();
-    dtbLog(warn) << "game shift: latch stuck at" << (state ? *state : -1);
-    return false;
+    const int op = want ? kGameShiftOn : kGameShiftOff;
+    const auto r = m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", op);
+    if (!r)
+        return false;
+    if (const auto state = gameShiftState(); state && *state >= 0 && *state <= 1 && *state != want)
+        dtbLog(warn) << "game shift: wanted" << want << "but reads" << *state;
+    return true;
 }
 
 bool WinThermalHAL::setMode(ThermalMode mode) {
@@ -182,10 +180,15 @@ bool WinThermalHAL::setMode(ThermalMode mode) {
         return false;
 
     // Leave/enter the G-Mode latch first, or the EC fights the write.
-    if (const auto latch = gameShiftState(); latch && *latch >= 0 && *latch <= 1) {
-        const int want = mode == ThermalMode::GMode ? 1 : 0;
-        if (*latch != want && !setGameShift(want))
-            dtbLog(warn) << "game shift: could not set latch - the mode write may bounce";
+    // Decision input is the CURRENT THERMAL MODE (op 0x0B - reliably
+    // readable), exactly like tr1xem/AWCC: the latch read (op 0x02) may
+    // return shapes we do not recognize, and gating on it silently skipped
+    // the disengage (mode bounced back to G-Mode).
+    if (const auto current = readCurrentProfile()) {
+        if (*current == ThermalMode::GMode && mode != ThermalMode::GMode)
+            setGameShift(0); // disengage, or the EC re-asserts 0xAB later
+        else if (*current != ThermalMode::GMode && mode == ThermalMode::GMode)
+            setGameShift(1); // engage
     }
 
 

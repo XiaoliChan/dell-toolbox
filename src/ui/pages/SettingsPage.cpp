@@ -62,7 +62,7 @@ QWidget* SettingsPage::buildGeneralCard() {
         startMin->setText(on ? tr("Enabled") : tr("Disabled"));
     });
 
-    auto* planSyncLabel = new QLabel(tr("G-Mode switches the Windows power plan"), box);
+    auto* planSyncLabel = new QLabel(tr("Thermal profiles switch the Windows power plan"), box);
     auto* planSync = new QPushButton(m_config->loadPowerPlanSync() ? tr("Enabled") : tr("Disabled"), box);
     planSync->setObjectName(QStringLiteral("ghostButton"));
     planSync->setCheckable(true);

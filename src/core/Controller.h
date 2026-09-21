@@ -139,8 +139,6 @@ private:
     QString m_manualProfileName; // active manual power profile (display)
     bool m_planSyncEnabled = true;
     bool m_forceControl = false;
-    bool m_planGmodeActive = false;
-    QString m_planSavedGuid; // plan to restore when G-Mode disengages
     bool m_planBusy = false; // a powercfg query is in flight
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone
