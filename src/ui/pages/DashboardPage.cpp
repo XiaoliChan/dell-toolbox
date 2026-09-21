@@ -10,6 +10,7 @@
 #include "hal/win/WinSystemInfo.h"
 #endif
 
+#include "ui/Names.h"
 #include "ui/Theme.h"
 #include "ui/widgets/AreaChart.h"
 #include "ui/widgets/Card.h"
@@ -19,8 +20,8 @@ namespace dtb::ui {
 
 DashboardPage::DashboardPage(HalSet hal, Controller* controller, ConfigStore* config, QWidget* parent)
     : QWidget(parent), m_hal(hal) {
-    Q_UNUSED(controller);
     Q_UNUSED(config);
+    m_controller = controller;
     auto* layout = new QGridLayout(this);
     layout->setContentsMargins(24, 24, 24, 24);
     layout->setHorizontalSpacing(16);
@@ -286,6 +287,32 @@ void DashboardPage::applyTempStats(QLabel* big, QLabel* chip, QLabel* high, QLab
 }
 
 void DashboardPage::onSnapshot(const SystemSnapshot& s) {
+    // Chips mirror the live controller state every tick - no signal
+    // dependency, so they can never be stuck on '-'.
+    QString thermalName;
+    switch (m_controller->baseline()->mode()) {
+    case ThermalMode::Quiet:
+        thermalName = tr("Quiet");
+        break;
+    case ThermalMode::Cool:
+        thermalName = tr("Cool");
+        break;
+    case ThermalMode::Balanced:
+        thermalName = tr("Optimized");
+        break;
+    case ThermalMode::Performance:
+        thermalName = tr("Ultra Performance");
+        break;
+    case ThermalMode::GMode:
+        thermalName = tr("G-Mode");
+        break;
+    case ThermalMode::Custom:
+        thermalName = tr("Custom");
+        break;
+    }
+    m_thermalChip->setText(thermalName);
+    m_policyChip->setText(m_controller->activePolicy());
+
     const int cpu = s.tempOf(0x01).value_or(0);
     const int gpu = s.tempOf(0x06).value_or(s.gpu.tempC > 0 ? s.gpu.tempC : 0);
     m_cpuChart->push(cpu);
@@ -388,7 +415,7 @@ void DashboardPage::onPolicyChanged(const QString& policy) {
 }
 
 void DashboardPage::onChargingModeChanged(const QString& mode) {
-    m_chargeMode->setText(mode);
+    m_chargeMode->setText(chargingModeName(mode));
 }
 
 } // namespace dtb::ui

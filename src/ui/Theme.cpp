@@ -92,9 +92,9 @@ QComboBox::down-arrow {
     image: url(:/res/combo-arrow.png); width: 10px; height: 10px; margin-right: 8px;
 }
 QComboBox QAbstractItemView {
-    background: #17181d; border: 1px solid #2a2d35; border-radius: 8px;
+    background: #17181d; border: 1px solid #2a2d35;
     color: #e9ebee; selection-background-color: #4f8cff; selection-color: #ffffff;
-    outline: 0; padding: 2px;
+    outline: 0;
 }
 QComboBox QAbstractItemView::item { min-height: 26px; padding: 4px 10px; border-radius: 6px; }
 QComboBox QAbstractItemView::item:hover { background: #23252c; }

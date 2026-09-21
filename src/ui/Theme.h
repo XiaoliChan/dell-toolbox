@@ -6,9 +6,7 @@
 namespace dtb::ui {
 
 void applyTheme(QApplication& app);
-// Combo popups: make the popup window translucent so the styled view's
-// rounded corners render without an opaque black frame around them.
-void softenComboPopups(QWidget* root);
+
 
 // A word-wrapped QLabel's minimumSizeHint is the full single-line width,
 // which blows up layout minimums and forces horizontal clipping. Pin the

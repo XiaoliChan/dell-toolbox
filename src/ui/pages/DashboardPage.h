@@ -33,6 +33,7 @@ private:
                         const QVector<int>& history);
 
     HalSet m_hal;
+    Controller* m_controller = nullptr; // not owned
     QLabel* m_model = nullptr;
     QLabel* m_modelSub = nullptr;
     QLabel* m_statusChip = nullptr;

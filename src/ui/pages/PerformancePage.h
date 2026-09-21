@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QComboBox>
+#include <QListWidget>
 #include <QLabel>
 #include <QPushButton>
 #include <QSlider>
@@ -27,7 +28,7 @@ private:
     void updateActiveLabel();
     QWidget* m_manualCard = nullptr;
     QLabel* m_activeLabel = nullptr;
-    QComboBox* m_profileCombo = nullptr;
+    QListWidget* m_profileList = nullptr;
     QPushButton* m_newProfile = nullptr;
     QPushButton* m_renameProfile = nullptr;
     QPushButton* m_deleteProfile = nullptr;

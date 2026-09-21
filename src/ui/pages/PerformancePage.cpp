@@ -24,6 +24,8 @@ constexpr int kPl2MinW = 35;
 constexpr int kPl2MaxW = 80;
 constexpr int kGpuPptMinW = 60;
 constexpr int kGpuPptMaxW = 115;
+// "GUID: <guid> (<name>)" lines of powercfg /list and /getactivescheme
+const QRegularExpression kPlanRe("GUID: ([0-9a-fA-F-]+)\\s+\\(([^)]+)\\)");
 } // namespace
 
 PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore* config, QWidget* parent)
@@ -43,11 +45,10 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
     profileRow->setContentsMargins(0, 0, 0, 0);
     m_newProfile = new QPushButton(tr("New profile"), this);
     profileRow->addWidget(m_newProfile);
-    m_profileCombo = new QComboBox(this);
-    m_profileCombo->setMinimumWidth(160);
-    m_profileCombo->setMaximumWidth(300);
-    m_profileCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-    profileRow->addWidget(m_profileCombo);
+    m_profileList = new QListWidget(this);
+    m_profileList->setMaximumHeight(132); // ~4 rows; grows the dialog feel
+    m_profileList->setUniformItemSizes(true);
+    profileRow->addWidget(m_profileList);
     m_renameProfile = new QPushButton(tr("Rename"), this);
     profileRow->addWidget(m_renameProfile);
     m_deleteProfile = new QPushButton(tr("Delete"), this);
@@ -77,9 +78,10 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
         refreshProfiles(p.name);
         m_manualCard->setVisible(true);
         m_saveProfile->setVisible(true);
+        applyManual();
     });
     connect(m_renameProfile, &QPushButton::clicked, this, [this] {
-        const int i = m_profileCombo->currentIndex();
+        const int i = m_profileList->currentRow();
         if (i < 0 || i >= m_profilesData.size())
             return;
         bool ok = false;
@@ -96,7 +98,7 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
         }
     });
     connect(m_deleteProfile, &QPushButton::clicked, this, [this] {
-        const int i = m_profileCombo->currentIndex();
+        const int i = m_profileList->currentRow();
         if (i < 0 || i >= m_profilesData.size())
             return;
         m_profilesData.removeAt(i);
@@ -105,16 +107,17 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
         m_manualCard->setVisible(!m_profilesData.isEmpty());
         m_saveProfile->setVisible(!m_profilesData.isEmpty());
     });
-    connect(m_profileCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+    // Selecting a row activates that profile right away.
+    connect(m_profileList, &QListWidget::currentRowChanged, this, [this](int index) {
         if (index < 0 || index >= m_profilesData.size())
             return;
         m_pl1->setValue(m_profilesData[index].pl1W);
         m_pl2->setValue(m_profilesData[index].pl2W);
-        applyManual(); // selecting a profile activates it right away
+        applyManual();
         updateActiveLabel();
     });
     connect(m_saveProfile, &QPushButton::clicked, this, [this] {
-        const int i = m_profileCombo->currentIndex();
+        const int i = m_profileList->currentRow();
         if (i < 0 || i >= m_profilesData.size())
             return;
         m_profilesData[i].pl1W = m_pl1->value();
@@ -137,15 +140,21 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
 }
 
 void PerformancePage::refreshProfiles(const QString& selectName) {
-    QSignalBlocker block(m_profileCombo);
-    m_profileCombo->clear();
+    QSignalBlocker block(m_profileList);
+    m_profileList->clear();
     for (const ConfigStore::ManualProfile& p : m_profilesData)
-        m_profileCombo->addItem(QStringLiteral("%1 (%2 W / %3 W)").arg(p.name).arg(p.pl1W).arg(p.pl2W));
-    const int idx = selectName.isEmpty() ? -1 : m_profileCombo->findText(selectName, Qt::MatchStartsWith);
-    m_profileCombo->setCurrentIndex(qMax(0, idx));
-    if (m_profileCombo->currentIndex() >= 0 && m_profileCombo->currentIndex() < m_profilesData.size()) {
-        m_pl1->setValue(m_profilesData[m_profileCombo->currentIndex()].pl1W);
-        m_pl2->setValue(m_profilesData[m_profileCombo->currentIndex()].pl2W);
+        m_profileList->addItem(QStringLiteral("%1  -  %2 W sustained / %3 W boost").arg(p.name).arg(p.pl1W).arg(p.pl2W));
+    int idx = -1;
+    if (!selectName.isEmpty())
+        for (int i = 0; i < m_profilesData.size(); ++i)
+            if (m_profilesData[i].name == selectName)
+                idx = i;
+    if (idx < 0 && !m_profilesData.isEmpty())
+        idx = 0;
+    m_profileList->setCurrentRow(idx);
+    if (idx >= 0) {
+        m_pl1->setValue(m_profilesData[idx].pl1W);
+        m_pl2->setValue(m_profilesData[idx].pl2W);
     }
 }
 
@@ -162,13 +171,11 @@ QWidget* PerformancePage::buildPowerPlanCard() {
     QProcess list;
     list.start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
     list.waitForFinished(3000);
-    static const QRegularExpression planRe(
-        "GUID: ([0-9a-fA-F-]+)\\s+\\(([^)]+)\\)");
     // powercfg prints in the console codepage, not UTF-8; decode locally so
     // localized plan names survive (GUIDs are ASCII either way).
     for (const QString& line : QString::fromLocal8Bit(list.readAllStandardOutput())
                                  .split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
-        const auto m = planRe.match(line.trimmed());
+        const auto m = kPlanRe.match(line.trimmed());
         if (m.hasMatch())
             plans.append({m.captured(1), m.captured(2)});
     }
@@ -176,7 +183,7 @@ QWidget* PerformancePage::buildPowerPlanCard() {
     QProcess active;
     active.start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
     active.waitForFinished(3000);
-    const auto am = planRe.match(QString::fromLocal8Bit(active.readAllStandardOutput()));
+    const auto am = kPlanRe.match(QString::fromLocal8Bit(active.readAllStandardOutput()));
     if (am.hasMatch())
         activeGuid = am.captured(1);
 
@@ -191,6 +198,24 @@ QWidget* PerformancePage::buildPowerPlanCard() {
             return;
         QProcess::startDetached(QStringLiteral("powercfg"), {QStringLiteral("/setactive"), guid});
     });
+    // Track plan changes made outside the app (Windows settings, G-Mode...):
+    // re-query every 5 s and re-select without firing the write-back.
+    auto* planTimer = new QTimer(box);
+    connect(planTimer, &QTimer::timeout, this, [this] {
+        QProcess active;
+        active.start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
+        if (!active.waitForFinished(2000))
+            return;
+        const auto m = kPlanRe.match(QString::fromLocal8Bit(active.readAllStandardOutput()));
+        if (!m.hasMatch())
+            return;
+        const int idx = m_planCombo->findData(m.captured(1));
+        if (idx >= 0 && idx != m_planCombo->currentIndex()) {
+            const QSignalBlocker block(m_planCombo);
+            m_planCombo->setCurrentIndex(idx);
+        }
+    });
+    planTimer->start(5000);
     box->setVisible(!plans.isEmpty());
     return box;
 }
@@ -245,9 +270,9 @@ QWidget* PerformancePage::buildSlidersCard() {
 }
 
 void PerformancePage::updateActiveLabel() {
-    if (!m_activeLabel || !m_profileCombo)
-        return; // combo is created after the sliders card during construction
-    const int i = m_profileCombo->currentIndex();
+    if (!m_activeLabel || !m_profileList)
+        return; // list is created after the sliders card during construction
+    const int i = m_profileList->currentRow();
     if (i < 0 || i >= m_profilesData.size()) {
         m_activeLabel->setText(tr("No active profile - targets come from the automatic loop"));
         return;

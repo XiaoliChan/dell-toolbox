@@ -18,6 +18,7 @@
 #include <QVBoxLayout>
 
 #include "core/AppInfo.h"
+#include "ui/Names.h"
 #include "ui/Theme.h"
 #include "ui/widgets/NavIcons.h"
 
@@ -106,12 +107,7 @@ MainWindow::MainWindow(HalSet hal, Controller* controller, ConfigStore* config, 
     // Tray radios + notification bubble on every profile change.
     connect(m_controller, &Controller::thermalModeChanged, this, &MainWindow::onThermalModeChanged);
     // Charging mode changes get their own bubble (works in monitor mode too).
-    connect(m_controller, &Controller::chargingModeChanged, this, [this](const QString& mode) {
-        m_tray->showMessage(tr("Charging mode"), tr("Switched to %1.").arg(mode),
-                            QSystemTrayIcon::Information, 3000);
-    });
-    // Rounded, frameless-looking combo popups on every page.
-    softenComboPopups(this);
+    connect(m_controller, &Controller::chargingModeChanged, this, &MainWindow::onChargingModeChanged);
 
 #ifdef Q_OS_WIN
     // Coexistence: pause our writers whenever the official controller runs.
@@ -206,6 +202,30 @@ void MainWindow::syncTrayModes(ThermalMode current) {
     }
 }
 
+
+void MainWindow::showToast(const QString& title, const QString& body) {
+    if (!m_toast) {
+        m_toast = new QLabel(this);
+        m_toast->setObjectName(QStringLiteral("toast"));
+        m_toast->setStyleSheet(QStringLiteral(
+            "background:#15161b; color:#e9ebee; border:1px solid #4f8cff;"
+            "border-radius:10px; padding:10px 14px;"));
+        m_toast->setTextFormat(Qt::RichText);
+        m_toast->setWordWrap(true);
+        m_toast->setMaximumWidth(340);
+        m_toast->hide();
+        m_toastTimer = new QTimer(this);
+        m_toastTimer->setSingleShot(true);
+        connect(m_toastTimer, &QTimer::timeout, m_toast, &QWidget::hide);
+    }
+    m_toast->setText(QStringLiteral("<b>%1</b><br>%2").arg(title.toHtmlEscaped(), body.toHtmlEscaped()));
+    m_toast->adjustSize();
+    m_toast->move(width() - m_toast->width() - 24, 20);
+    m_toast->show();
+    m_toast->raise();
+    m_toastTimer->start(3500);
+}
+
 void MainWindow::onThermalModeChanged(ThermalMode current, bool external) {
     syncTrayModes(current);
     QString name;
@@ -233,6 +253,15 @@ void MainWindow::onThermalModeChanged(ThermalMode current, bool external) {
                         external ? tr("Now following %1.").arg(name)
                                  : tr("Switched to %1.").arg(name),
                         QSystemTrayIcon::Information, 3000);
+    showToast(external ? tr("Profile changed by AWCC/DPM") : tr("Profile applied"),
+              external ? tr("Now following %1.").arg(name) : tr("Switched to %1.").arg(name));
+}
+
+void MainWindow::onChargingModeChanged(const QString& mode) {
+    const QString name = chargingModeName(mode);
+    m_tray->showMessage(tr("Charging mode"), tr("Switched to %1.").arg(name),
+                        QSystemTrayIcon::Information, 3000);
+    showToast(tr("Charging mode"), tr("Switched to %1.").arg(name));
 }
 
 void MainWindow::onSnapshot(const SystemSnapshot& s) {

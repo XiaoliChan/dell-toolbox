@@ -1,6 +1,10 @@
 #include "ui/pages/ThermalPage.h"
 
 #include <QButtonGroup>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QMouseEvent>
+#include <QWheelEvent>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -19,6 +23,29 @@
 
 namespace dtb::ui {
 namespace {
+// Numeric field that only becomes editable on CLICK - hover and wheel never
+// change it (wheel is inert by design; the page scrolls instead).
+class ClickSpinBox : public QSpinBox {
+public:
+    explicit ClickSpinBox(QWidget* parent) : QSpinBox(parent) {
+        setButtonSymbols(QAbstractSpinBox::NoButtons);
+        setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        setReadOnly(true);
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* e) override {
+        setReadOnly(false);
+        setFocus(Qt::MouseFocusReason);
+        selectAll();
+        QSpinBox::mousePressEvent(e);
+    }
+    void focusOutEvent(QFocusEvent* e) override {
+        setReadOnly(true);
+        QSpinBox::focusOutEvent(e);
+    }
+    void wheelEvent(QWheelEvent* e) override { e->ignore(); }
+};
 // Read-only reference curves per firmware mode. The BIOS tunes fan behaviour
 // per profile internally and the official curves are not exposed over any WMI
 // surface (docs/awcc-analysis/00) - these presets mirror each mode's intent
@@ -317,29 +344,52 @@ QWidget* ThermalPage::buildSceneCard() {
     m_sceneBody = new QWidget(box);
     auto* form = new QFormLayout(m_sceneBody);
     form->setContentsMargins(0, 0, 0, 0);
-    m_gpuEnter = new QSpinBox(m_sceneBody);
+    m_gpuEnter = new ClickSpinBox(m_sceneBody);
     m_gpuEnter->setRange(20, 100);
     m_gpuEnter->setValue(p.gpuEnterThreshold);
-    m_gpuExit = new QSpinBox(m_sceneBody);
+    m_gpuExit = new ClickSpinBox(m_sceneBody);
     m_gpuExit->setRange(10, 95);
     m_gpuExit->setValue(p.gpuExitThreshold);
-    m_enterDebounce = new QSpinBox(m_sceneBody);
-    m_enterDebounce->setRange(1, 300);
-    m_enterDebounce->setSuffix(tr(" s"));
-    m_enterDebounce->setValue(p.enterDebounceS);
-    m_exitDebounce = new QSpinBox(m_sceneBody);
-    m_exitDebounce->setRange(1, 600);
-    m_exitDebounce->setSuffix(tr(" s"));
-    m_exitDebounce->setValue(p.exitDebounceS);
     m_processes = new QTextEdit(m_sceneBody);
     m_processes->setPlaceholderText(tr("game.exe\nlauncher.exe\n(one per line)"));
     m_processes->setPlainText(p.gameProcesses.join(QLatin1Char('\n')));
     m_processes->setFixedHeight(72);
 
+    // Debounce durations: click-to-edit value + a unit dropdown (s / min).
+    auto makeDebounceRow = [&](int seconds, QSpinBox** spinOut, QComboBox** unitOut) {
+        auto* rowW = new QWidget(m_sceneBody);
+        auto* hl = new QHBoxLayout(rowW);
+        hl->setContentsMargins(0, 0, 0, 0);
+        hl->setSpacing(6);
+        auto* spin = new ClickSpinBox(rowW);
+        spin->setRange(1, 600);
+        spin->setValue(qBound(1, seconds, 600));
+        auto* unit = new QComboBox(rowW);
+        unit->addItems({QStringLiteral("s"), QStringLiteral("min")});
+        unit->setProperty("wasMin", false);
+        hl->addWidget(spin, 1);
+        hl->addWidget(unit);
+        connect(unit, &QComboBox::currentIndexChanged, rowW, [spin, unit](int index) {
+            const bool wasMin = unit->property("wasMin").toBool();
+            const bool toMin = index == 1;
+            int sec = spin->value() * (wasMin ? 60 : 1);
+            spin->setRange(1, toMin ? 10 : 600);
+            spin->setValue(toMin ? qBound(1, int(std::lround(sec / 60.0)), 10) : qBound(1, sec, 600));
+            unit->setProperty("wasMin", toMin);
+        });
+        hl->addStretch(1);
+        *spinOut = spin;
+        *unitOut = unit;
+        return rowW;
+    };
+
+    auto* enterDeb = makeDebounceRow(p.enterDebounceS, &m_enterDebounce, &m_enterUnit);
+    auto* exitDeb = makeDebounceRow(p.exitDebounceS, &m_exitDebounce, &m_exitUnit);
+
     form->addRow(tr("GPU enter threshold (%)"), m_gpuEnter);
     form->addRow(tr("GPU exit threshold (%)"), m_gpuExit);
-    form->addRow(tr("Enter debounce"), m_enterDebounce);
-    form->addRow(tr("Exit debounce"), m_exitDebounce);
+    form->addRow(tr("Enter confirmation"), enterDeb);
+    form->addRow(tr("Exit confirmation"), exitDeb);
     form->addRow(tr("Foreground processes"), m_processes);
     m_sceneReset = new QPushButton(tr("Reset to defaults"), m_sceneBody);
     form->addRow(QString(), m_sceneReset);
@@ -409,8 +459,9 @@ void ThermalPage::onSceneParamsChanged() {
     SceneParams p = m_config->loadSceneParams(); // keep enabled/others, update edited fields
     p.gpuEnterThreshold = m_gpuEnter->value();
     p.gpuExitThreshold = m_gpuExit->value();
-    p.enterDebounceS = m_enterDebounce->value();
-    p.exitDebounceS = m_exitDebounce->value();
+    // debounce values live in the unit shown next to them (s or min)
+    p.enterDebounceS = m_enterDebounce->value() * (m_enterUnit->currentIndex() == 1 ? 60 : 1);
+    p.exitDebounceS = m_exitDebounce->value() * (m_exitUnit->currentIndex() == 1 ? 60 : 1);
     p.gameProcesses = m_processes->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     m_config->saveSceneParams(p);
     m_controller->scene()->setParams(p);
@@ -435,6 +486,8 @@ void ThermalPage::onSceneReset() {
     const SceneParams defaults;
     m_gpuEnter->setValue(defaults.gpuEnterThreshold);
     m_gpuExit->setValue(defaults.gpuExitThreshold);
+    m_enterUnit->setCurrentIndex(0); // back to seconds
+    m_exitUnit->setCurrentIndex(0);
     m_enterDebounce->setValue(defaults.enterDebounceS);
     m_exitDebounce->setValue(defaults.exitDebounceS);
     m_processes->setPlainText(defaults.gameProcesses.join(QLatin1Char('\n')));

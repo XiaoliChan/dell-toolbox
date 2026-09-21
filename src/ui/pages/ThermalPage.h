@@ -69,7 +69,9 @@ private:
     QSpinBox* m_gpuEnter = nullptr;
     QSpinBox* m_gpuExit = nullptr;
     QSpinBox* m_enterDebounce = nullptr;
+    QComboBox* m_enterUnit = nullptr;
     QSpinBox* m_exitDebounce = nullptr;
+    QComboBox* m_exitUnit = nullptr;
     QTextEdit* m_processes = nullptr;
 };
 

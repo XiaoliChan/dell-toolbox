@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
 #include <QStackedWidget>
@@ -26,7 +27,11 @@ private:
     void buildNav();
     void buildTray();
     void syncTrayModes(ThermalMode current);
+    QLabel* m_toast = nullptr;
+    QTimer* m_toastTimer = nullptr;
     void onThermalModeChanged(ThermalMode current, bool external);
+    void onChargingModeChanged(const QString& mode);
+    void showToast(const QString& title, const QString& body);
     void onSnapshot(const SystemSnapshot& s);
     void paintTrayIcon(int cpuTempC, int gpuTempC);
 
