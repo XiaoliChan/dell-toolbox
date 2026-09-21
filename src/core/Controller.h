@@ -69,6 +69,8 @@ public:
     // plan. Applies only when enabled in Settings.
     void setPowerPlanSyncEnabled(bool on) { m_planSyncEnabled = on; }
     bool powerPlanSyncEnabled() const { return m_planSyncEnabled; }
+    // Overrides monitor mode: write even when AWCC processes are detected.
+    void setForceControl(bool on) { m_forceControl = on; }
     // Full state reload after Settings "Reset to defaults": every running
     // object re-reads the (now default) config - mode, curves, boost floors,
     // scene, failsafe - otherwise stale in-memory values survive the reset.
@@ -136,6 +138,7 @@ private:
     QString m_chargingMode; // last known charging mode ("" until first read)
     QString m_manualProfileName; // active manual power profile (display)
     bool m_planSyncEnabled = true;
+    bool m_forceControl = false;
     bool m_planGmodeActive = false;
     QString m_planSavedGuid; // plan to restore when G-Mode disengages
     bool m_planBusy = false; // a powercfg query is in flight

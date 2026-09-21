@@ -117,7 +117,9 @@ MainWindow::MainWindow(HalSet hal, Controller* controller, ConfigStore* config, 
     auto* watcher = new QTimer(this);
     auto checkAwcc = [this] {
         const bool awccRunning = !dtb::win::runningAwccProcs().isEmpty();
-        const bool passive = awccRunning && m_config->loadAwccCoexist();
+        // "Take control" lets the user override monitor mode (e.g. after
+        // uninstalling AWCC left a lingering service running).
+        const bool passive = awccRunning && m_config->loadAwccCoexist() && !m_config->loadForceControl();
         if (m_controller->passive() != passive)
             m_controller->setPassive(passive);
         if (m_dashboard)
@@ -252,11 +254,11 @@ void MainWindow::onThermalModeChanged(ThermalMode current, bool external) {
         name = tr("Custom");
         break;
     }
-    m_tray->showMessage(external ? tr("Profile changed by AWCC/DPM") : tr("Profile applied"),
+    m_tray->showMessage(external ? tr("Profile changed externally") : tr("Profile applied"),
                         external ? tr("Now following %1.").arg(name)
                                  : tr("Switched to %1.").arg(name),
                         QSystemTrayIcon::Information, 3000);
-    showToast(external ? tr("Profile changed by AWCC/DPM") : tr("Profile applied"),
+    showToast(external ? tr("Profile changed externally") : tr("Profile applied"),
               external ? tr("Now following %1.").arg(name) : tr("Switched to %1.").arg(name));
 }
 

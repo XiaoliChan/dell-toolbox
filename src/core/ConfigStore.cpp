@@ -204,6 +204,10 @@ bool ConfigStore::loadPowerPlanSync() { return m_s.value("dtb/powerPlanSync", tr
 
 void ConfigStore::savePowerPlanSync(bool on) { m_s.setValue("dtb/powerPlanSync", on); }
 
+bool ConfigStore::loadForceControl() { return m_s.value("dtb/forceControl", false).toBool(); }
+
+void ConfigStore::saveForceControl(bool on) { m_s.setValue("dtb/forceControl", on); }
+
 bool ConfigStore::loadAwccCoexist() { return m_s.value("dtb/awccCoexist", true).toBool(); }
 
 void ConfigStore::saveAwccCoexist(bool on) { m_s.setValue("dtb/awccCoexist", on); }

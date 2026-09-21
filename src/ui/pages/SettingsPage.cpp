@@ -73,6 +73,17 @@ QWidget* SettingsPage::buildGeneralCard() {
         m_controller->setPowerPlanSyncEnabled(on);
     });
 
+    auto* takeControlLabel = new QLabel(tr("Take control even when AWCC is detected"), box);
+    auto* takeControl = new QPushButton(m_config->loadForceControl() ? tr("Enabled") : tr("Disabled"), box);
+    takeControl->setObjectName(QStringLiteral("ghostButton"));
+    takeControl->setCheckable(true);
+    takeControl->setChecked(m_config->loadForceControl());
+    connect(takeControl, &QPushButton::toggled, this, [this, takeControl](bool on) {
+        takeControl->setText(on ? tr("Enabled") : tr("Disabled"));
+        m_config->saveForceControl(on);
+        m_controller->setForceControl(on);
+    });
+
     auto* logLabel = new QLabel(tr("Log level"), box);
     m_logLevel = new QComboBox(box);
     m_logLevel->addItems({tr("Debug"), tr("Info"), tr("Warning"), tr("Error")});
@@ -89,10 +100,12 @@ QWidget* SettingsPage::buildGeneralCard() {
     form->addWidget(startMin, 1, 1);
     form->addWidget(planSyncLabel, 2, 0);
     form->addWidget(planSync, 2, 1);
-    form->addWidget(logLabel, 3, 0);
-    form->addWidget(m_logLevel, 3, 1);
-    form->addWidget(resetLabel, 4, 0);
-    form->addWidget(reset, 4, 1);
+    form->addWidget(takeControlLabel, 3, 0);
+    form->addWidget(takeControl, 3, 1);
+    form->addWidget(logLabel, 4, 0);
+    form->addWidget(m_logLevel, 4, 1);
+    form->addWidget(resetLabel, 5, 0);
+    form->addWidget(reset, 5, 1);
     form->setColumnStretch(2, 1);
     box->bodyLayout()->addLayout(form);
     return box;

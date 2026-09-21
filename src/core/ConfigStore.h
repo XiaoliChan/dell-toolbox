@@ -55,6 +55,9 @@ public:
     bool loadPowerPlanSync(); // G-Mode also switches the Windows power plan
     void savePowerPlanSync(bool on);
 
+    bool loadForceControl(); // take over even when AWCC processes are detected
+    void saveForceControl(bool on);
+
     bool loadAwccCoexist();
     void saveAwccCoexist(bool on);
 
