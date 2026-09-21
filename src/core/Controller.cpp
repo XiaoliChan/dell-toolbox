@@ -222,8 +222,12 @@ void Controller::beginPlanChain() {
     });
     connect(list, &QProcess::finished, this, [this, list, wantsHigh] {
         list->deleteLater();
+        // readAllStandardOutput() DRAINS the buffer: parse once, reuse
+        // everywhere (a second read returns empty - that is how the plan
+        // name lookup produced a bogus "Custom").
+        const auto plans = parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()));
         QString target;
-        for (const PowerPlanEntry& plan : parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()))) {
+        for (const PowerPlanEntry& plan : plans) {
             // powercfg's GUID casing is not guaranteed: match the well-known
             // template GUIDs case-insensitively or the fallback silently dies.
             const bool high = plan.guid.compare(QLatin1String("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"),
@@ -275,11 +279,14 @@ void Controller::beginPlanChain() {
             return;
         }
         QString targetName;
-        for (const auto& plan : parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput())))
+        for (const auto& plan : plans)
             if (plan.guid == target)
                 targetName = plan.name;
-        queryActivePlan([this, target, targetName](const QString& active) {
-            m_planActiveName = targetName.isEmpty() ? QStringLiteral("Custom") : targetName;
+        queryActivePlan([this, target, targetName, wantsHigh](const QString& active) {
+            m_planActiveName = targetName.isEmpty()
+                                   ? (wantsHigh ? QStringLiteral("High performance")
+                                                : QStringLiteral("Balanced"))
+                                   : targetName;
             if (active == target) {
                 finishPlanChain();
                 return;
