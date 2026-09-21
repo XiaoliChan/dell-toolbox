@@ -21,6 +21,9 @@ public:
     bool supportsGMode() override { return m_gMode != TriState::No; }
     std::optional<ThermalMode> readCurrentProfile() override;
 
+    std::optional<int> gameShiftState(); // EC G-Mode latch: 1 latched, 0 off
+    bool toggleGameShift();
+
 private:
     bool applyModeByte(int modeByte);
     std::optional<int> thermalInformationOp(int op, int id);
@@ -47,7 +50,8 @@ private:
     static constexpr int kModeCustom = 0x00;
     // Read-side op codes, per the Linux alienware-wmi driver:
     static constexpr int kOpGetCurrentProfile = 0x0B; // Thermal_Information: active mode code
-    static constexpr int kGameShiftGet = 0x02; // GameShiftStatus GET (op 0x01 = TOGGLE, never send)
+    static constexpr int kGameShiftGet = 0x02;    // GameShiftStatus GET
+    static constexpr int kGameShiftToggle = 0x01; // GameShiftStatus TOGGLE (leaving/entering G-Mode)
     static constexpr int kModeQuietUstt = 0xA3;
     static constexpr int kModeCoolUstt = 0xA2;
     static constexpr int kModeBalancedLegacy = 0x97;

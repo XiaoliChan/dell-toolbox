@@ -145,9 +145,33 @@ bool WinThermalHAL::applyModeByte(int modeByte) {
     return ok;
 }
 
+// Game Shift is an EC LATCH on G-series, not just a thermal mode byte:
+// while it latches, the EC re-asserts 0xAB seconds after anything else is
+// written (the observed bounce). The kernel alienware-wmi driver mirrors
+// this: read the latch (GameShiftStatus op 0x02) and TOGGLE it (op 0x01)
+// whenever the target mode's G-state differs, then apply the mode byte.
+std::optional<int> WinThermalHAL::gameShiftState() {
+    // low byte of the reply: 1 = G-Mode latched, 0 = off; invalid on machines
+    // without game shift (callers treat nullopt as "no latch support")
+    return m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftGet);
+}
+
+bool WinThermalHAL::toggleGameShift() {
+    const auto r = m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftToggle);
+    return r.has_value(); // toggle has no meaningful return value
+}
+
 bool WinThermalHAL::setMode(ThermalMode mode) {
     if (!m_wmi.valid())
         return false;
+
+    // Leave/enter the G-Mode latch first, or the EC fights the write.
+    if (const auto latch = gameShiftState(); latch && *latch >= 0 && *latch <= 1) {
+        const bool latched = *latch == 1;
+        if (latched != (mode == ThermalMode::GMode) && !toggleGameShift())
+            dtbLog(warn) << "game shift toggle failed - the mode write may bounce";
+    }
+
 
     // Balanced has a legacy (0x97) and a USTT (0xA0) encoding; probe USTT once
     // and remember which the machine accepts (tcc-g15 semantics).
