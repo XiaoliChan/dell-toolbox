@@ -12,6 +12,7 @@
 
 #include <cmath> // std::lround (debounce unit conversion)
 
+#include "core/Logger.h"
 #include "ui/Theme.h"
 #include "ui/widgets/Card.h"
 #include "ui/widgets/FanCurveEditor.h"
@@ -420,6 +421,7 @@ QWidget* ThermalPage::buildSceneCard() {
 }
 
 void ThermalPage::onModeSelectedWithMode(ThermalMode mode) {
+    dtbLog(info) << "ui: user selected thermal mode" << int(mode);
     m_config->saveMode(mode);
     m_controller->baseline()->setMode(mode);
     m_controller->forceNextModeWrite();

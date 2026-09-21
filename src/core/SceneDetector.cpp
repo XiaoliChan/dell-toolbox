@@ -1,5 +1,7 @@
 #include "core/SceneDetector.h"
 
+#include "core/Logger.h"
+
 #include <algorithm>
 
 namespace dtb {
@@ -55,6 +57,8 @@ void SceneDetector::onTick(const SystemSnapshot& s) {
             m_inScene = true;
             m_streak = 0;
             m_trigger = procHit.isEmpty() ? QStringLiteral("gpu") : QStringLiteral("process:") + procHit;
+            dtbLog(info) << "scene: game detected (" << m_trigger << ", gpu load"
+                         << s.gpu.utilPercent << ")";
         }
     } else {
         if (gpuSustain || !procHit.isEmpty())
@@ -65,6 +69,7 @@ void SceneDetector::onTick(const SystemSnapshot& s) {
             m_inScene = false;
             m_trigger.clear();
             m_streak = 0;
+            dtbLog(info) << "scene: game over";
         }
     }
 }

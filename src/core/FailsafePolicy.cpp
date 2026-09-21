@@ -1,5 +1,7 @@
 #include "core/FailsafePolicy.h"
 
+#include "core/Logger.h"
+
 #include <algorithm>
 
 namespace dtb {
@@ -27,11 +29,16 @@ void FailsafePolicy::onTick(const SystemSnapshot& s) {
     const auto gpu = gpuTemp(s);
 
     if (!m_tripped) {
-        const bool dangerous = !cpu || *cpu >= m_params.cpuTripC || !gpu || *gpu >= m_params.gpuTripC;
+        // A FAILED sensor read is not overheating - "no data" must never
+        // trip the failsafe (flaky WMI reads used to force G-Mode out of
+        // nowhere). Only genuinely hot readings count.
+        const bool dangerous = (cpu && *cpu >= m_params.cpuTripC) || (gpu && *gpu >= m_params.gpuTripC);
         m_streak = dangerous ? m_streak + 1 : 0;
         if (m_streak >= std::max(1, m_params.triggerDelayS)) {
             m_tripped = true;
             m_streak = 0;
+            dtbLog(warn) << "failsafe: TRIPPED (cpu" << (cpu ? QString::number(*cpu) : QStringLiteral("n/a"))
+                         << "gpu" << (gpu ? QString::number(*gpu) : QStringLiteral("n/a")) << ")";
         }
     } else {
         const bool cool = cpu && *cpu < m_params.cpuTripC - m_params.releaseHysteresisC && gpu
@@ -41,6 +48,7 @@ void FailsafePolicy::onTick(const SystemSnapshot& s) {
             m_tripped = false;
             m_justReleased = true;
             m_streak = 0;
+            dtbLog(info) << "failsafe: released";
         }
     }
 }

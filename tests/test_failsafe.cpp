@@ -62,17 +62,16 @@ private slots:
         QVERIFY(p.justReleased());
     }
 
-    void invalidTempsCountAsDangerous() {
+    void missingTempsNeverTrip() {
+        // Real-machine lesson (G3 3590): WMI sensor reads fail intermittently
+        // and the old 'no data = dangerous' rule tripped the failsafe out of
+        // nowhere, force-switching the machine to G-Mode. Only genuinely hot
+        // readings may trip.
         FailsafePolicy p;
         SystemSnapshot bad; // no sensors at all
-        for (int i = 0; i < 8; ++i)
+        for (int i = 0; i < 60; ++i)
             p.onTick(bad);
-        QVERIFY(p.tripped());
-
-        // missing readings also block the release
-        for (int i = 0; i < 200; ++i)
-            p.onTick(bad);
-        QVERIFY(p.tripped());
+        QVERIFY(!p.tripped());
     }
 
     void gpuStillHotBlocksRelease() {
