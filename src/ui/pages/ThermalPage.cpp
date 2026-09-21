@@ -215,6 +215,8 @@ QWidget* ThermalPage::buildCurvesCard() {
             m_boostLabels.append({fi.id, value});
         }
     }
+    if (easy->count() == 0)
+        easy->addWidget(new QLabel(tr("No fans detected"), m_easyBody));
     body->addWidget(m_easyBody);
 
     // Advanced: the per-fan curve editors + reset.
