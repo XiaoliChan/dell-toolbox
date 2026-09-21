@@ -38,23 +38,33 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
     layout->addWidget(title);
     layout->addWidget(buildPowerPlanCard());
 
-    // Manual power limits are opt-in through a named-profile flow:
-    // New profile -> edit sliders -> Save (persists + records the override).
+    // Manual power limits are opt-in through named profiles, kept in their
+    // own visible card: the list shows everything saved, the buttons act on
+    // the selection, sliders edit, Save persists + activates.
     m_profilesData = m_config->loadManualProfiles();
-    auto* profileRow = new QHBoxLayout;
-    profileRow->setContentsMargins(0, 0, 0, 0);
-    m_newProfile = new QPushButton(tr("New profile"), this);
-    profileRow->addWidget(m_newProfile);
-    m_profileList = new QListWidget(this);
-    m_profileList->setMaximumHeight(132); // ~4 rows; grows the dialog feel
+    auto* profilesCard = new Card(QStringLiteral("Custom power profiles"), this);
+    auto* pbody = profilesCard->bodyLayout();
+    m_profileList = new QListWidget(profilesCard);
+    m_profileList->setObjectName(QStringLiteral("profileList"));
+    m_profileList->setMaximumHeight(132);
     m_profileList->setUniformItemSizes(true);
-    profileRow->addWidget(m_profileList);
-    m_renameProfile = new QPushButton(tr("Rename"), this);
-    profileRow->addWidget(m_renameProfile);
-    m_deleteProfile = new QPushButton(tr("Delete"), this);
-    profileRow->addWidget(m_deleteProfile);
-    profileRow->addStretch(1);
-    layout->addLayout(profileRow);
+    pbody->addWidget(m_profileList);
+    auto* buttonRow = new QHBoxLayout;
+    buttonRow->setContentsMargins(0, 0, 0, 0);
+    m_newProfile = new QPushButton(tr("New profile"), profilesCard);
+    buttonRow->addWidget(m_newProfile);
+    buttonRow->addStretch(1);
+    m_renameProfile = new QPushButton(tr("Rename"), profilesCard);
+    buttonRow->addWidget(m_renameProfile);
+    m_deleteProfile = new QPushButton(tr("Delete"), profilesCard);
+    buttonRow->addWidget(m_deleteProfile);
+    pbody->addLayout(buttonRow);
+    auto* hint = new QLabel(
+        tr("Select a profile to activate it; edit the sliders and press Save profile to keep it."),
+        profilesCard);
+    pbody->addWidget(hint);
+    wrapLabel(hint);
+    layout->addWidget(profilesCard);
 
     m_manualCard = buildSlidersCard();
     m_manualCard->setVisible(!m_profilesData.isEmpty());
@@ -164,59 +174,48 @@ QWidget* PerformancePage::buildPowerPlanCard() {
     m_planCombo = new QComboBox(box);
     m_planCombo->setMinimumWidth(360);
     layout->addWidget(m_planCombo);
-    layout->addStretch(1);
 
-    struct Plan { QString guid; QString name; };
-    QList<Plan> plans;
-    QProcess list;
-    list.start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
-    list.waitForFinished(3000);
-    // powercfg prints in the console codepage, not UTF-8; decode locally so
-    // localized plan names survive (GUIDs are ASCII either way).
-    for (const QString& line : QString::fromLocal8Bit(list.readAllStandardOutput())
-                                 .split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
-        const auto m = kPlanRe.match(line.trimmed());
-        if (m.hasMatch())
-            plans.append({m.captured(1), m.captured(2)});
-    }
-    QString activeGuid;
-    QProcess active;
-    active.start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
-    active.waitForFinished(3000);
-    const auto am = kPlanRe.match(QString::fromLocal8Bit(active.readAllStandardOutput()));
-    if (am.hasMatch())
-        activeGuid = am.captured(1);
-
-    for (const Plan& p : plans)
-        m_planCombo->addItem(p.name, p.guid);
-    const int idx = m_planCombo->findData(activeGuid);
-    if (idx >= 0)
-        m_planCombo->setCurrentIndex(idx);
-    connect(m_planCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
-        const QString guid = m_planCombo->itemData(index).toString();
-        if (guid.isEmpty())
-            return;
-        QProcess::startDetached(QStringLiteral("powercfg"), {QStringLiteral("/setactive"), guid});
-    });
-    // Track plan changes made outside the app (Windows settings, G-Mode...):
-    // re-query every 5 s and re-select without firing the write-back.
+    // powercfg can take seconds: run it asynchronously and never block the
+    // UI thread. A 5 s timer tracks plans changed outside the app.
+    auto refresh = [this] {
+        auto* list = new QProcess(this);
+        connect(list, &QProcess::finished, this, [this, list] {
+            list->deleteLater();
+            struct Plan {
+                QString guid, name;
+            };
+            QList<Plan> plans;
+            const QStringList lines = QString::fromLocal8Bit(list->readAllStandardOutput())
+                                          .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            for (const QString& line : lines) {
+                const auto m = kPlanRe.match(line.trimmed());
+                if (m.hasMatch())
+                    plans.append({m.captured(1), m.captured(2)});
+            }
+            auto* active = new QProcess(this);
+            connect(active, &QProcess::finished, this, [this, active, plans] {
+                active->deleteLater();
+                const auto am = kPlanRe.match(QString::fromLocal8Bit(active->readAllStandardOutput()));
+                const QString activeGuid = am.hasMatch() ? am.captured(1) : QString();
+                const QSignalBlocker block(m_planCombo);
+                m_planCombo->clear();
+                int idx = -1;
+                for (const auto& p : plans) {
+                    m_planCombo->addItem(p.name, p.guid);
+                    if (p.guid == activeGuid)
+                        idx = m_planCombo->count() - 1;
+                }
+                if (idx >= 0)
+                    m_planCombo->setCurrentIndex(idx);
+            });
+            active->start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
+        });
+        list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
+    };
+    refresh();
     auto* planTimer = new QTimer(box);
-    connect(planTimer, &QTimer::timeout, this, [this] {
-        QProcess active;
-        active.start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
-        if (!active.waitForFinished(2000))
-            return;
-        const auto m = kPlanRe.match(QString::fromLocal8Bit(active.readAllStandardOutput()));
-        if (!m.hasMatch())
-            return;
-        const int idx = m_planCombo->findData(m.captured(1));
-        if (idx >= 0 && idx != m_planCombo->currentIndex()) {
-            const QSignalBlocker block(m_planCombo);
-            m_planCombo->setCurrentIndex(idx);
-        }
-    });
+    connect(planTimer, &QTimer::timeout, this, refresh);
     planTimer->start(5000);
-    box->setVisible(!plans.isEmpty());
     return box;
 }
 

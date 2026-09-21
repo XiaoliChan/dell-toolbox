@@ -28,12 +28,24 @@ QLabel#brandText { color: #ffffff; font-size: 17px; font-weight: 800; letter-spa
 QLabel#cardValue { font-size: 24px; font-weight: 800; color: #ffffff; }
 QLabel#cardCaption { font-size: 11px; font-weight: 600; color: #62666e; }
 
-QListWidget { background: transparent; border: none; padding: 0px 10px; outline: 0; }
-QListWidget::item {
+/* Nav rail list only (scoped: other QListWidgets style themselves). */
+QWidget#sidebar QListWidget { background: transparent; border: none; padding: 0px 10px; outline: 0; }
+QWidget#sidebar QListWidget::item {
     color: #b9bec7; padding: 9px 12px; border-radius: 8px; margin: 2px 0;
 }
-QListWidget::item:hover { background: #1a1c22; color: #e9ebee; }
-QListWidget::item:selected { background: #1c2536; color: #6a9dff; }
+QWidget#sidebar QListWidget::item:hover { background: #1a1c22; color: #e9ebee; }
+QWidget#sidebar QListWidget::item:selected { background: #1c2536; color: #6a9dff; }
+
+/* Standalone lists (power profiles) get a solid, visible panel. */
+QListWidget#profileList {
+    background: #17181d; border: 1px solid #26282f; border-radius: 10px;
+    padding: 4px; outline: 0;
+}
+QListWidget#profileList::item {
+    color: #e9ebee; padding: 8px 10px; border-radius: 6px; margin: 1px 0;
+}
+QListWidget#profileList::item:hover { background: #23252c; }
+QListWidget#profileList::item:selected { background: #4f8cff; color: #ffffff; }
 
 QFrame#card { background: #15161b; border: 1px solid #1f2127; border-radius: 14px; }
 QLabel#cardTitle { font-size: 14px; font-weight: 700; color: #e9ebee; background: transparent; }
@@ -83,8 +95,8 @@ QSlider::sub-page:disabled { background: #3a3d45; }
 QSlider::handle:disabled { background: #3a3d45; }
 
 QComboBox {
-    background: #1a1c22; border: 1px solid #26282f; border-radius: 10px;
-    padding: 8px 12px; color: #e9ebee; min-width: 90px;
+    background: #17181d; border: 1px solid #26282f; border-radius: 10px;
+    padding: 6px 10px; color: #e9ebee; min-width: 90px;
 }
 QComboBox:hover { border-color: #3a3d45; }
 QComboBox::drop-down { border: none; width: 26px; }
