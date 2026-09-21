@@ -156,9 +156,25 @@ std::optional<int> WinThermalHAL::gameShiftState() {
     return m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftGet);
 }
 
-bool WinThermalHAL::toggleGameShift() {
-    const auto r = m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftToggle);
-    return r.has_value(); // toggle has no meaningful return value
+// Set the game shift latch to `want` (1 = G-Mode on, 0 = off). The toggle op
+// is blind on this firmware and may not flip the latch every time - verify
+// after each toggle and retry (the "bounces back to G-Mode later" symptom
+// came from an unverified toggle that never actually landed).
+bool WinThermalHAL::setGameShift(int want) {
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const auto state = gameShiftState();
+        if (!state || *state < 0 || *state > 1)
+            return true; // no game shift support: nothing to latch
+        if (*state == want)
+            return true;
+        dtbLog(warn) << "game shift:" << *state << "-> toggle -> want" << want;
+        const auto r = m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftToggle);
+        if (!r)
+            return false;
+    }
+    const auto state = gameShiftState();
+    dtbLog(warn) << "game shift: latch stuck at" << (state ? *state : -1);
+    return false;
 }
 
 bool WinThermalHAL::setMode(ThermalMode mode) {
@@ -167,9 +183,9 @@ bool WinThermalHAL::setMode(ThermalMode mode) {
 
     // Leave/enter the G-Mode latch first, or the EC fights the write.
     if (const auto latch = gameShiftState(); latch && *latch >= 0 && *latch <= 1) {
-        const bool latched = *latch == 1;
-        if (latched != (mode == ThermalMode::GMode) && !toggleGameShift())
-            dtbLog(warn) << "game shift toggle failed - the mode write may bounce";
+        const int want = mode == ThermalMode::GMode ? 1 : 0;
+        if (*latch != want && !setGameShift(want))
+            dtbLog(warn) << "game shift: could not set latch - the mode write may bounce";
     }
 
 
