@@ -60,12 +60,12 @@ std::optional<ThermalMode> WinThermalHAL::readCurrentProfile() {
             return mode;
         }
     }
-    // 2) G-Mode latched state. GameShiftStatus op 0x02 is a pure GET; op 0x01
-    //    is a TOGGLE and must never be sent from a read path.
-    if (const auto g = m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", kGameShiftGet);
-        g && *g != -1 && (*g & 0xFF) == 1) {
-        return ThermalMode::GMode;
-    }
+    // NOTE: the GameShiftStatus fallback that lived here is gone. The latch
+    // bit sticks at 1 once engaged (our earlier builds' op 0x01), and during
+    // a transient op-0x0B failure this read reported G-Mode while the real
+    // mode was Balanced - the app then adopted G-Mode off its own stuck
+    // latch: the phantom bounce. The 1 Hz loop must never touch method 37;
+    // --gshift / --doctor expose it for diagnosis and recovery only.
     // 3) Dell ACPI "DA" channel fallback. It cannot express G-Mode (values
     //    0-8 only) but covers the four USTT modes when AWCC WMI read fails.
     if (!m_acpiReady)
@@ -190,6 +190,15 @@ bool WinThermalHAL::setMode(ThermalMode mode) {
         break;
     }
     return applyModeByte(value);
+}
+
+// Diagnostic/recovery only (never called by the control loop): send one raw
+// GameShiftStatus op and return the reply (-1 on failure). Lets --doctor and
+// --gshift observe/clear a wedged latch on the real machine.
+int WinThermalHAL::rawGameShiftOp(int op) {
+    const auto r = m_wmi.callInstanceMethod(L"AWCCWmiMethodFunction", L"GameShiftStatus", op);
+    dtbLog(info) << "gshift op" << op << "->" << (r ? *r : -1);
+    return r ? *r : -1;
 }
 
 bool WinThermalHAL::setFanPercent(FanId fan, int percent) {

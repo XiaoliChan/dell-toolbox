@@ -70,6 +70,7 @@ void attachParentConsole() {
 } // namespace
 
 #include "hal/win/WinChargeHAL.h"
+#include "hal/win/WinThermalHAL.h"
 #include "hal/win/WmiConnection.h"
 #include "hal/win/WinHalFactory.h"
 #else
@@ -128,6 +129,8 @@ void printDoctor() {
             }
         }
         std::printf("  %-24s: %s\n", "current thermal profile", modeName);
+        if (auto* th = dynamic_cast<dtb::win::WinThermalHAL*>(halOwner.set.thermal.get()))
+            std::printf("  %-24s: %d\n", "game shift latch", th->rawGameShiftOp(2));
     }
     pass(halOwner.set.battery && halOwner.set.battery->available(), "battery (WMI)");
     pass(halOwner.set.gpu && halOwner.set.gpu->available(), "gpu (NVAPI)");
@@ -204,6 +207,28 @@ int main(int argc, char* argv[]) {
         printDoctor();
         return 0;
     }
+#ifdef Q_OS_WIN
+    // Diagnostic: observe/clear the EC game-shift latch. --gshift=2 reads;
+    // --gshift=0 / --gshift=1 send one op then read back.
+    for (const QString& a : args) {
+        if (a.startsWith(QStringLiteral("--gshift="))) {
+            bool ok = false;
+            const int op = a.mid(9).toInt(&ok);
+            if (!ok)
+                return 2;
+            auto halOwner = dtb::win::createHalSet();
+            auto* th = dynamic_cast<dtb::win::WinThermalHAL*>(halOwner.set.thermal.get());
+            if (!th) {
+                std::printf("thermal HAL unavailable\n");
+                return 2;
+            }
+            std::printf("GameShiftStatus op %d -> %d\n", op, th->rawGameShiftOp(op));
+            if (op != 2)
+                std::printf("latch now: %d\n", th->rawGameShiftOp(2));
+            return 0;
+        }
+    }
+#endif
 
     // Portable build: everything lives next to the executable.
     const QString base = QApplication::applicationDirPath();

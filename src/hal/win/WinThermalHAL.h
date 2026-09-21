@@ -20,6 +20,8 @@ public:
     bool available() override;
     bool supportsGMode() override { return m_gMode != TriState::No; }
     std::optional<ThermalMode> readCurrentProfile() override;
+    // Diagnostic only: one raw GameShiftStatus op; -1 on failure.
+    int rawGameShiftOp(int op);
 
 private:
     bool applyModeByte(int modeByte);

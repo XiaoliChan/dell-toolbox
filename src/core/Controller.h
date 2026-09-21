@@ -144,6 +144,7 @@ private:
     bool m_planBusy = false; // a powercfg chain is in flight
     ThermalMode m_planWanted = ThermalMode::Balanced; // latest request
     bool m_planAppliedHigh = false; // what the last completed chain applied
+    bool m_planCreateTried = false; // one duplicatescheme retry per request
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)
     QSet<FanId> m_fanForceRewrite; // next write bypasses the dead zone
     qint64 m_lastFanWriteMs = 0;

@@ -188,6 +188,7 @@ void Controller::handlePlanSync(ThermalMode mode) {
     if (!m_planSyncEnabled)
         return;
     m_planWanted = mode;
+    m_planCreateTried = false;
     if (!m_planBusy)
         beginPlanChain();
 }
@@ -223,6 +224,25 @@ void Controller::beginPlanChain() {
                 target = plan.guid;
         }
         if (target.isEmpty()) {
+            // High Performance can be missing (Dell uninstallers wipe it;
+            // powercfg enumeration was also flaky right after). Recreate it
+            // from the stock template once, then retry the chain.
+            if (wantsHigh && !m_planCreateTried) {
+                m_planCreateTried = true;
+                dtbLog(info) << "plan sync: High Performance missing - recreating from template";
+                auto* dup = new QProcess(this);
+                connect(dup, &QProcess::finished, this, [this, dup] {
+                    dup->deleteLater();
+                    beginPlanChain(); // busy stays set: same logical chain
+                });
+                connect(dup, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
+                    finishPlanChain();
+                });
+                dup->start(QStringLiteral("powercfg"),
+                           {QStringLiteral("-duplicatescheme"),
+                            QStringLiteral("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")});
+                return;
+            }
             dtbLog(info) << "plan sync: no matching plan (wantsHigh" << wantsHigh << ")";
             finishPlanChain();
             return;
