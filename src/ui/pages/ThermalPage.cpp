@@ -422,6 +422,8 @@ void ThermalPage::onConfigReloaded() {
         entry.second->blockSignals(true);
         entry.second->setValue(v);
         entry.second->blockSignals(false);
+        m_boostSaved[entry.first] = v; // resync the dirty-guard: stale entries
+        // here would silently skip the next real change's saveFanBoost
         for (const auto& label : m_boostLabels)
             if (label.first == entry.first)
                 label.second->setText(v > 0 ? tr("%1%").arg(v) : tr("Auto"));

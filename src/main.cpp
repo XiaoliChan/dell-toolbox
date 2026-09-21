@@ -258,11 +258,12 @@ int main(int argc, char* argv[]) {
                 window.resize(sm.captured(1).toInt(), sm.captured(2).toInt());
         }
     }
-    // Start minimized when requested via flag or the Settings toggle.
+    // Start minimized when requested via flag or the Settings toggle: keep the
+    // window hidden (tray-only), matching the "Start minimized to tray" label
+    // and the old --minimized behavior. showMinimized() would park a live
+    // taskbar button instead; the tray's double-click showNormal() restores.
     const bool startMinimized = args.contains("--minimized") || config.loadStartMinimized();
-    if (startMinimized)
-        window.showMinimized();
-    else
+    if (!startMinimized)
         window.show();
     controller.start(1000);
 

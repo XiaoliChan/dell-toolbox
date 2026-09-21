@@ -53,6 +53,14 @@ QWidget* SettingsPage::buildGeneralCard() {
         startMin->setText(on ? tr("Enabled") : tr("Disabled"));
         m_config->saveStartMinimized(on);
     });
+    // Reset to defaults clears this flag too; re-sync the toggle instead of
+    // leaving a stale Enabled/Disabled state on the button.
+    connect(m_controller, &Controller::configReloaded, startMin, [this, startMin] {
+        const bool on = m_config->loadStartMinimized();
+        QSignalBlocker block(startMin);
+        startMin->setChecked(on);
+        startMin->setText(on ? tr("Enabled") : tr("Disabled"));
+    });
 
     auto* logLabel = new QLabel(tr("Log level"), box);
     m_logLevel = new QComboBox(box);

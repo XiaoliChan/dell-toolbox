@@ -43,6 +43,14 @@ BatteryPage::BatteryPage(HalSet hal, Controller* controller, ConfigStore* config
     }
 
     connect(controller, &Controller::snapshotUpdated, this, &BatteryPage::onSnapshot);
+    // External charging-mode changes (DPM/AWCC side): re-sync the radios.
+    connect(controller, &Controller::chargingModeChanged, this, [this](const QString& mode) {
+        if (mode.isEmpty() || !m_modeGroup)
+            return;
+        const QSignalBlocker block(m_modeGroup);
+        for (QAbstractButton* b : m_modeGroup->buttons())
+            b->setChecked(b->property("chargeKey").toString() == mode);
+    });
     WheelGuard::apply(this);
 }
 
@@ -117,6 +125,7 @@ QWidget* BatteryPage::buildModesCard() {
     for (const IChargeThresholdHAL::Mode& mode : modes) {
         auto* radio = new QRadioButton(mode.name, box);
         radio->setChecked(mode.cctkValue == current);
+        radio->setProperty("chargeKey", mode.cctkValue);
         m_modeGroup->addButton(radio, index++);
         layout->addWidget(radio);
         if (mode.cctkValue == "custom") {

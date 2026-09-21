@@ -124,15 +124,30 @@ QToolTip {
     app.setStyleSheet(qss);
 }
 
-// Popup windows of existing combos: translucent background lets the rounded
-// view paint without the container's opaque black frame around it.
+namespace {
+// Marks a combo's popup window translucent whenever its view (re)appears.
+// QComboBox creates the popup view lazily on first showPopup, so both the
+// eager pass at startup and this filter are needed.
+class ComboPopupSoftener : public QObject {
+public:
+    using QObject::QObject;
+    static void mark(QComboBox* combo) {
+        combo->view()->window()->setAttribute(Qt::WA_TranslucentBackground);
+    }
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::ChildAdded)
+            if (auto* combo = qobject_cast<QComboBox*>(watched); combo && combo->view())
+                mark(combo);
+        return QObject::eventFilter(watched, event);
+    }
+};
+} // namespace
+
 void softenComboPopups(QWidget* root) {
     const QList<QComboBox*> combos = root->findChildren<QComboBox*>();
     for (QComboBox* combo : combos) {
-        if (QWidget* popup = combo->view()) {
-            popup->window()->setAttribute(Qt::WA_TranslucentBackground);
-            popup->setStyleSheet(QStringLiteral("background: transparent;"));
-        }
+        ComboPopupSoftener::mark(combo); // forces view + container creation
+        combo->installEventFilter(new ComboPopupSoftener(combo)); // parented: dies with combo
     }
 }
 

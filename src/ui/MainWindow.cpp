@@ -56,7 +56,7 @@ MainWindow::MainWindow(HalSet hal, Controller* controller, ConfigStore* config, 
         DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark)); // DWMWA_USE_IMMERSIVE_DARK_MODE
         const COLORREF caption = 0x00110e0d; // #0d0e11 (COLORREF is 0x00BBGGRR)
         DwmSetWindowAttribute(hwnd, 35, &caption, sizeof(caption)); // DWMWA_CAPTION_COLOR (Win11)
-        const COLORREF border = 0x00271f1f; // #1f2127
+        const COLORREF border = 0x0027211f; // #1f2127 (COLORREF is 0x00BBGGRR)
         DwmSetWindowAttribute(hwnd, 34, &border, sizeof(border)); // DWMWA_BORDER_COLOR (Win11)
     }
 #endif
@@ -105,6 +105,13 @@ MainWindow::MainWindow(HalSet hal, Controller* controller, ConfigStore* config, 
     connect(m_controller, &Controller::snapshotUpdated, this, &MainWindow::onSnapshot);
     // Tray radios + notification bubble on every profile change.
     connect(m_controller, &Controller::thermalModeChanged, this, &MainWindow::onThermalModeChanged);
+    // Charging mode changes get their own bubble (works in monitor mode too).
+    connect(m_controller, &Controller::chargingModeChanged, this, [this](const QString& mode) {
+        m_tray->showMessage(tr("Charging mode"), tr("Switched to %1.").arg(mode),
+                            QSystemTrayIcon::Information, 3000);
+    });
+    // Rounded, frameless-looking combo popups on every page.
+    softenComboPopups(this);
 
 #ifdef Q_OS_WIN
     // Coexistence: pause our writers whenever the official controller runs.
