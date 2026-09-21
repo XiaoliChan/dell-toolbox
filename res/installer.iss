@@ -16,7 +16,8 @@
 AppId={{7A6E2D9B-52C4-4B8A-9C31-D3F0A1B2C701}
 AppName={#AppName}
 AppVersion={#AppVersion}
-DefaultDirName={autopf}\Dell Toolbox
+ArchitecturesInstallIn64BitMode=x64compatible
+DefaultDirName={autopf64}\Dell Toolbox
 DefaultGroupName={#AppName}
 ; the app itself requires administrator (UAC manifest)
 PrivilegesRequired=admin
@@ -38,7 +39,10 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; runascurrentuser: launch with Setup's elevated token - the app's manifest
+; requires administrator, and postinstall runs de-elevated by default
+; (CreateProcess failed; code 740).
+Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallRun]
 ; remove the autostart scheduled task the app may have created
