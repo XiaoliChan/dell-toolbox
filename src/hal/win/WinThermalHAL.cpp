@@ -2,6 +2,8 @@
 
 #include "core/Logger.h"
 
+#include <QThread>
+
 namespace dtb::win {
 
 namespace {
@@ -172,6 +174,28 @@ bool WinThermalHAL::setMode(ThermalMode mode) {
         const bool ok = applyModeByte(kModeGMode);
         m_gMode = ok ? TriState::Yes : TriState::No;
         return ok;
+    }
+
+    if (mode == ThermalMode::Performance) {
+        // Try each candidate table and keep the first one the firmware
+        // actually RETAINS (raw readback code matches). A write can return
+        // 'ok' for a table the EC then silently reverts - the bounce-back.
+        static const int kPerfCodes[] = {kModePerformanceUstt, kModePerformanceLegacy,
+                                         kModePerformanceAlt};
+        for (int code : kPerfCodes) {
+            if (!applyModeByte(code))
+                continue; // write rejected outright
+            for (int probe = 0; probe < 3; ++probe) {
+                if (const auto raw = thermalInformationOp(kOpGetCurrentProfile, 0);
+                    raw && (*raw & 0xFF) == code) {
+                    dtbLog(info) << "performance table locked: 0x" << Qt::hex << code;
+                    return true;
+                }
+                QThread::msleep(120); // readback can lag the write
+            }
+            dtbLog(warn) << "performance table 0x" << Qt::hex << code << "not retained";
+        }
+        return false;
     }
 
     int value = kModeCustom;

@@ -54,7 +54,12 @@ private:
     static constexpr int kModeCoolUstt = 0xA2;
     static constexpr int kModeBalancedLegacy = 0x97;
     static constexpr int kModeBalancedUstt = 0xA0;
-    static constexpr int kModePerformanceUstt = 0xA4; // USTT PERFORMANCE (0xA1 is the quiet balanced-perf table)
+    // Which performance table a firmware actually has is model-specific:
+    // probed at runtime in setMode (USTT PERFORMANCE -> legacy -> USTT
+    // balanced-performance), verified by the raw readback code.
+    static constexpr int kModePerformanceUstt = 0xA4;
+    static constexpr int kModePerformanceLegacy = 0x99;
+    static constexpr int kModePerformanceAlt = 0xA1; // quiet balanced-perf table
     static constexpr int kModeGMode = 0xAB;
 };
 
