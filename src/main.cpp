@@ -129,7 +129,7 @@ void printDoctor() {
             }
         }
         std::printf("  %-24s: %s\n", "current thermal profile", modeName);
-        if (auto* th = dynamic_cast<dtb::win::WinThermalHAL*>(halOwner.set.thermal.get()))
+        if (auto* th = dynamic_cast<dtb::win::WinThermalHAL*>(halOwner.set.thermal))
             std::printf("  %-24s: %d\n", "game shift latch", th->rawGameShiftOp(2));
     }
     pass(halOwner.set.battery && halOwner.set.battery->available(), "battery (WMI)");
@@ -217,7 +217,7 @@ int main(int argc, char* argv[]) {
             if (!ok)
                 return 2;
             auto halOwner = dtb::win::createHalSet();
-            auto* th = dynamic_cast<dtb::win::WinThermalHAL*>(halOwner.set.thermal.get());
+            auto* th = dynamic_cast<dtb::win::WinThermalHAL*>(halOwner.set.thermal);
             if (!th) {
                 std::printf("thermal HAL unavailable\n");
                 return 2;
