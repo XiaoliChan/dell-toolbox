@@ -6,6 +6,7 @@
 #include <QStackedWidget>
 #include <QMenu>
 #include <QSystemTrayIcon>
+#include <QTimer>
 
 #include "core/ConfigStore.h"
 #include "core/Controller.h"

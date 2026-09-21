@@ -1,4 +1,7 @@
-IDI_ICON1 ICON "dell-toolbox.ico"
+// Numeric resource id: Explorer shows the icon group with the lowest id. A
+// bare IDI_ICON1 here would be an undefined macro (windows.h is included
+// below) and silently produce a string-named resource the shell ignores.
+1 ICON "dell-toolbox.ico"
 #include <windows.h>
 
 #define VER_FILEVERSION 1,0,0,0

@@ -7,6 +7,11 @@ namespace dtb::ui {
 
 void applyTheme(QApplication& app);
 
+// Round the corners of every QComboBox popup under root (on Windows a styled
+// dark popup otherwise draws square corners on an opaque white window). Call
+// once after the widget tree exists; also re-marks lazily created popups.
+void softenComboPopups(QWidget* root);
+
 
 // A word-wrapped QLabel's minimumSizeHint is the full single-line width,
 // which blows up layout minimums and forces horizontal clipping. Pin the

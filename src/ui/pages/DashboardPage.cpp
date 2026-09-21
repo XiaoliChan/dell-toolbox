@@ -312,6 +312,11 @@ void DashboardPage::onSnapshot(const SystemSnapshot& s) {
     }
     m_thermalChip->setText(thermalName);
     m_policyChip->setText(m_controller->activePolicy());
+    // Charging mode: seeded by the controller's first poll (no signal), so
+    // mirror it here; chargingModeChanged keeps it instant on real changes.
+    const QString chargeKey = m_controller->chargingMode();
+    if (!chargeKey.isEmpty())
+        m_chargeMode->setText(chargingModeName(chargeKey));
 
     const int cpu = s.tempOf(0x01).value_or(0);
     const int gpu = s.tempOf(0x06).value_or(s.gpu.tempC > 0 ? s.gpu.tempC : 0);

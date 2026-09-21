@@ -43,6 +43,10 @@ public:
 
     SystemSnapshot lastSnapshot() const { return m_snapshot; }
     QString activePolicy() const { return m_activeName; }
+    // Last known charging mode ("" until the first successful poll); the
+    // initial value is seeded silently - chargingModeChanged only reports
+    // genuine changes afterwards.
+    QString chargingMode() const { return m_chargingMode; }
     ManualOverride* manual() { return &m_manual; }
     // Easy fan boost: per-fan minimum percent. The chain raises curve targets
     // up to this floor when applying; 0 releases the fan back to the curve.
@@ -82,7 +86,8 @@ signals:
     // Emitted after reloadFromConfig(); pages refresh their controls from it.
     void configReloaded();
     // Emitted when the firmware-reported charging mode changes (polled every
-    // 3rd tick; empty string = read failed, signal suppressed then).
+    // 3rd tick; empty string = read failed, signal suppressed then; the first
+    // successful read only seeds chargingMode(), no signal).
     void chargingModeChanged(const QString& mode);
 
 private:

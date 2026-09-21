@@ -10,6 +10,8 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 
+#include <cmath> // std::lround (debounce unit conversion)
+
 #include "ui/Theme.h"
 #include "ui/widgets/Card.h"
 #include "ui/widgets/FanCurveEditor.h"
@@ -480,6 +482,28 @@ void ThermalPage::onConfigReloaded() {
                 label.second->setText(v > 0 ? tr("%1%").arg(v) : tr("Auto"));
     }
     onCurveModeChanged(m_curveMode ? m_curveMode->currentIndex() : 0);
+    // Scene card: pull the reloaded (possibly reset) params back into the
+    // controls. Signals are blocked because the setters would otherwise fire
+    // onSceneParamsChanged and re-persist the stale UI values over the reset.
+    const SceneParams sp = m_config->loadSceneParams();
+    auto resyncSpin = [](QSpinBox* box, int v) {
+        box->blockSignals(true);
+        box->setValue(v);
+        box->blockSignals(false);
+    };
+    resyncSpin(m_gpuEnter, sp.gpuEnterThreshold);
+    resyncSpin(m_gpuExit, sp.gpuExitThreshold);
+    m_enterUnit->blockSignals(true);
+    m_enterUnit->setCurrentIndex(0); // back to seconds
+    m_enterUnit->blockSignals(false);
+    resyncSpin(m_enterDebounce, sp.enterDebounceS);
+    m_exitUnit->blockSignals(true);
+    m_exitUnit->setCurrentIndex(0);
+    m_exitUnit->blockSignals(false);
+    resyncSpin(m_exitDebounce, sp.exitDebounceS);
+    m_processes->blockSignals(true);
+    m_processes->setPlainText(sp.gameProcesses.join(QLatin1Char('\n')));
+    m_processes->blockSignals(false);
 }
 
 void ThermalPage::onSceneReset() {

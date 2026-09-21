@@ -166,6 +166,10 @@ void PerformancePage::refreshProfiles(const QString& selectName) {
         m_pl1->setValue(m_profilesData[idx].pl1W);
         m_pl2->setValue(m_profilesData[idx].pl2W);
     }
+    // currentRowChanged is blocked above (no applyManual here: activating a
+    // profile stays a user action), so refresh the caption directly or it
+    // stays on "No active profile" after startup/reset/rename/delete.
+    updateActiveLabel();
 }
 
 QWidget* PerformancePage::buildPowerPlanCard() {
@@ -174,6 +178,14 @@ QWidget* PerformancePage::buildPowerPlanCard() {
     m_planCombo = new QComboBox(box);
     m_planCombo->setMinimumWidth(360);
     layout->addWidget(m_planCombo);
+    // User selection switches the plan. The 5 s tracker below mutates the
+    // combo under a signal blocker, so this fires for user changes only.
+    connect(m_planCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const QString guid = m_planCombo->itemData(index).toString();
+        if (guid.isEmpty())
+            return;
+        QProcess::startDetached(QStringLiteral("powercfg"), {QStringLiteral("/setactive"), guid});
+    });
 
     // powercfg can take seconds: run it asynchronously and never block the
     // UI thread. A 5 s timer tracks plans changed outside the app.

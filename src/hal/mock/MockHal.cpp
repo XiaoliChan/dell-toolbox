@@ -140,7 +140,9 @@ bool MockHal::doSetChargeMode(const QString& cctkValue) {
     w.svalue = cctkValue;
     writes.append(w);
     if (chargeAvailable && chargeWritesSucceed)
-        m_chargeMode = cctkValue;
+        // currentMode() must return a bare mode key (like the real backends):
+        // "custom:55-80" would match no radio chargeKey in the UI.
+        m_chargeMode = cctkValue.section(QLatin1Char(':'), 0, 0);
     return chargeAvailable && chargeWritesSucceed;
 }
 

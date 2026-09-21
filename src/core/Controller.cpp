@@ -135,8 +135,13 @@ void Controller::tickOnce() {
     if (m_hal.charge && ++m_chargePollTick % 3 == 0) {
         const QString mode = m_hal.charge->currentMode();
         if (!mode.isEmpty() && mode != m_chargingMode) {
+            const bool firstRead = m_chargingMode.isEmpty();
             m_chargingMode = mode;
-            emit chargingModeChanged(mode);
+            // The first successful read only seeds the state: the firmware did
+            // not switch anything, so no "Switched to" bubble on app start.
+            // UI reads the initial value through chargingMode().
+            if (!firstRead)
+                emit chargingModeChanged(mode);
         }
     }
     if (m_passive) { // monitor only: another app owns the hardware

@@ -109,6 +109,9 @@ MainWindow::MainWindow(HalSet hal, Controller* controller, ConfigStore* config, 
     // Charging mode changes get their own bubble (works in monitor mode too).
     connect(m_controller, &Controller::chargingModeChanged, this, &MainWindow::onChargingModeChanged);
 
+    // Every page is built: round the combo popups (see Theme.h).
+    softenComboPopups(this);
+
 #ifdef Q_OS_WIN
     // Coexistence: pause our writers whenever the official controller runs.
     auto* watcher = new QTimer(this);
