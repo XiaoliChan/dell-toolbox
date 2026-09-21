@@ -15,6 +15,7 @@
 - `Thermal_Control` op `0x01` = 激活模式(与现有写路径一致)
 
 dell-toolbox 的 `hal/win/WinThermalHAL` 已逐条镜像这些常量,读回顺序:AWCC op 0x0B → GameShiftStatus GET → DA 通道兜底。
+- **G-Mode 是 EC 闩锁(真机实锤 2026-09-21)**:闩锁开着时写其他模式字节,EC 几秒内把 0xAB 压回——表现为"切走又弹回 G-Mode"+外部采纳气泡,与 AWCC 是否安装无关。正确离开方式 = 先 GameShiftStatus toggle 关闩锁再写目标模式;进入 G-Mode 反之。内核 alienware-wmi 的 platform_profile set 即此逻辑
 
 ## 2.【实证】OC Controls 侧的热边界
 
