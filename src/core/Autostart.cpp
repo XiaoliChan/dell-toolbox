@@ -57,11 +57,10 @@ bool Autostart::setEnabled(bool on) {
                  {QStringLiteral("/create"), QStringLiteral("/tn"), kTaskName, QStringLiteral("/xml"), xmlPath,
                   QStringLiteral("/f")});
     create.waitForFinished(10000);
-    if (create.exitCode() != 0) {
-        dtbLog(warn) << "autostart: schtasks failed:" << create.readAllStandardError().trimmed();
-        return false;
-    }
-    return true;
+    if (create.exitCode() == 0)
+        return true;
+    dtbLog(warn) << "autostart: XML create failed:" << createError(create);
+    return createViaCli(exePathBackslashes());
 }
 
 #else
