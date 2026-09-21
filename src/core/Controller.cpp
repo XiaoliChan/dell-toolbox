@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QProcess>
+#include <QRegularExpression>
 
 #include <functional>
 
@@ -11,6 +12,8 @@
 namespace dtb {
 
 namespace {
+// A bare "12345678-1234-..." GUID (duplicatescheme prints "Power Scheme GUID: <guid> (name)").
+const QRegularExpression kGuidOnlyRe("([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
 // The firmware's profile readback can lag our own successful write by a tick
 // or two; ignore adoptions inside this window so a slow read does not revert
 // the mode we just applied.
@@ -121,14 +124,29 @@ void Controller::adoptExternalProfile() {
             return; // readback may lag our own recent write
     }
     const auto current = m_hal.thermal->readCurrentProfile();
-    if (!current || *current == m_baseline.mode())
+    if (!current || *current == m_baseline.mode()) {
+        m_adoptStreak = 0;
         return;
+    }
+    // The firmware readback is flaky right after writes (observed: a
+    // different mode returned seconds after a successful write, flipping the
+    // app off the user's choice). Adopt only a readback that is STABLE for 3
+    // consecutive ticks - real external changes (AWCC) are stable, glitches
+    // are not.
+    if (m_adoptStreak == 0 || m_adoptCandidate != *current) {
+        m_adoptCandidate = *current;
+        m_adoptStreak = 1;
+        return;
+    }
+    if (++m_adoptStreak < 3)
+        return;
+    m_adoptStreak = 0;
     m_baseline.setMode(*current);
     if (m_cfg)
         m_cfg->saveMode(*current);
     m_lastModeWritten = *current; // do not write it straight back
     m_failedMode.reset();
-    dtbLog(info) << "thermal profile changed externally -> adopted";
+    dtbLog(info) << "thermal profile changed externally -> adopted" << int(*current);
     emit thermalModeChanged(*current, true);
 }
 
@@ -233,7 +251,19 @@ void Controller::beginPlanChain() {
                 auto* dup = new QProcess(this);
                 connect(dup, &QProcess::finished, this, [this, dup] {
                     dup->deleteLater();
-                    beginPlanChain(); // busy stays set: same logical chain
+                    // Activate the minted GUID straight from the command
+                    // output: the fresh plan may not enumerate in /list for a
+                    // while on this machine (re-listing found nothing last
+                    // time). Output: "Power Scheme GUID: <guid> (name)".
+                    const auto m = kGuidOnlyRe.match(
+                        QString::fromLocal8Bit(dup->readAllStandardOutput()));
+                    if (!m.hasMatch()) {
+                        dtbLog(warn) << "plan sync: duplicatescheme gave no GUID (exit"
+                                     << dup->exitCode() << ")";
+                        finishPlanChain();
+                        return;
+                    }
+                    setActivePlan(m.captured(1), [this] { finishPlanChain(); });
                 });
                 connect(dup, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
                     finishPlanChain();

@@ -17,12 +17,12 @@ QFile g_file;
 void rotateIfNeeded() {
     if (g_file.isOpen() && g_file.size() < g_rotateBytes)
         return;
+    // Reset in place - never spawn .1/.2 files. The previous session's log
+    // is dropped at startup (init removes the file); the size cap only
+    // guards against unbounded growth within one session.
     g_file.close();
-    if (!g_path.isEmpty()) {
-        const QString rotated = g_path + ".1";
-        QFile::remove(rotated);
-        QFile::rename(g_path, rotated);
-    }
+    if (!g_path.isEmpty())
+        QFile::remove(g_path);
 }
 } // namespace
 
@@ -32,6 +32,8 @@ void Logger::init(const QString& filePath, Level minLevel, qint64 rotateBytes) {
     g_minLevel = minLevel;
     g_rotateBytes = rotateBytes;
     g_file.close();
+    if (QFile::exists(filePath))
+        QFile::remove(filePath); // fresh log each run: one file, no backups
     g_file.setFileName(filePath);
 }
 

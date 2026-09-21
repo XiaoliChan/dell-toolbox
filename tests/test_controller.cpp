@@ -133,9 +133,16 @@ private slots:
                     adopted = static_cast<int>(m);
                     lastExternal = external;
                 });
-        // The machine reports G-Mode (set in AWCC): DT must adopt and save it.
+        // The machine reports G-Mode (set in AWCC): DT adopts once the
+        // readback stays stable for 3 consecutive ticks (glitch debounce) -
+        // and not sooner. The startup write below fires the signal once with
+        // the saved baseline (internal), then the adoption follows.
         rig.hal.externalMode = ThermalMode::GMode;
         rig.tick(1);
+        QCOMPARE(adopted, static_cast<int>(ThermalMode::Custom)); // startup write, internal
+        rig.tick(3); // inside the 5 s post-write adoption grace
+        QCOMPARE(adopted, static_cast<int>(ThermalMode::Custom)); // not adopted yet
+        rig.tick(4); // grace over + 3 stable ticks: adopted now
         QCOMPARE(adopted, static_cast<int>(ThermalMode::GMode));
         QVERIFY(lastExternal); // firmware-reported, not our own write
         QCOMPARE(rig.cfg->loadMode(), ThermalMode::GMode);

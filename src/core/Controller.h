@@ -132,6 +132,8 @@ private:
     // write throttling state
     std::optional<ThermalMode> m_lastModeWritten;
     std::optional<ThermalMode> m_failedMode;
+    ThermalMode m_adoptCandidate = ThermalMode::Balanced; // debounced adoption
+    int m_adoptStreak = 0; // consecutive ticks of the same external mode
     bool m_pendingModeWrite = false; // user picked a mode; its write has not succeeded yet
     int m_pendingWriteAttempts = 0; // failed retries of the pending write
     qint64 m_lastModeWriteMs = 0; // last successful mode write (adoption grace window)

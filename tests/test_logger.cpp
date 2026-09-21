@@ -39,7 +39,8 @@ private slots:
         QVERIFY(content.contains("kept"));
     }
 
-    void rotatesWhenTooBig() {
+    void truncatesWhenTooBig() {
+        // One file, always: overflow resets in place, never a .1 backup.
         const QString path = dir->filePath("rotating.log");
         Logger::init(path, Logger::debug, 4096);
         for (int i = 0; i < 200; ++i)
@@ -48,9 +49,8 @@ private slots:
         QFile current(path);
         QFile rotated(path + ".1");
         QVERIFY(current.exists());
-        QVERIFY(rotated.exists());
-        QVERIFY(rotated.size() > 4096); // the overflowed original
-        QVERIFY(current.size() < 4096); // fresh after rotation
+        QVERIFY(!rotated.exists()); // no backup files, ever
+        QVERIFY(current.size() < 4096); // reset in place
     }
 
 private:
