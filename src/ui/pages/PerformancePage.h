@@ -8,6 +8,7 @@
 #include <QWidget>
 
 #include "core/ConfigStore.h"
+#include "core/PowerCfg.h"
 #include "core/Controller.h"
 #include "hal/HalInterfaces.h"
 
@@ -19,9 +20,12 @@ public:
     explicit PerformancePage(HalSet hal, Controller* controller, ConfigStore* config, QWidget* parent = nullptr);
 
 private slots:
-    void applyManual();
+    void refreshPowerPlans();
 
 private:
+    void updatePowerPlans(const QVector<PowerPlanEntry>& plans, const QString& activeGuid);
+    friend class UiRegressionTest;
+    bool m_planRefreshBusy = false;
     QWidget* buildPowerPlanCard();
     QWidget* buildSlidersCard();
     void refreshProfiles(const QString& selectName = {});

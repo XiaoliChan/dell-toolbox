@@ -22,7 +22,7 @@
 #include "ui/Theme.h"
 #include "ui/widgets/NavIcons.h"
 
-#ifdef Q_OS_WIN
+#ifdef DTB_HAL_WIN
 #include "hal/win/AwccConflict.h"
 #endif
 #include "ui/pages/BatteryPage.h"
@@ -112,7 +112,7 @@ MainWindow::MainWindow(HalSet hal, Controller* controller, ConfigStore* config, 
     // Every page is built: round the combo popups (see Theme.h).
     softenComboPopups(this);
 
-#ifdef Q_OS_WIN
+#ifdef DTB_HAL_WIN
     // Coexistence: pause our writers whenever the official controller runs.
     auto* watcher = new QTimer(this);
     auto checkAwcc = [this] {

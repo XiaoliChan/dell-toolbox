@@ -27,6 +27,7 @@ private:
     int readPowerW(); // NVML, loaded on demand; -1 when unavailable
     void* m_nvapi = nullptr; // module handle
     void* m_gpuHandle = nullptr;
+    bool m_nvapiInited = false;
     bool m_loaded = false;
     bool m_loadFailed = false;
     void* m_nvml = nullptr; // module handle

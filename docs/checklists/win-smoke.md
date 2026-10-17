@@ -1,6 +1,7 @@
 # Windows 真机冒烟清单(G3 3590)
 
 每次发版前在真机走一遍;任何一步失败即阻断发版。
+本清单为待验证项；Linux/offscreen 单元测试不代表 Windows 真机验证通过。
 
 ## 安装与启动
 - [ ] 解压 portable zip 到任意目录,双击 `dell-toolbox.exe`,UAC 通过
@@ -12,9 +13,9 @@
 - [ ] 无管理员权限运行 → UAC 或明确失败信息(不应静默)
 
 ## 热控制
-- [ ] 模式三选切换:托盘图标温度刷新,风扇行为变化可闻
+- [ ] 逐项切换 Quiet / Cool / Balanced / Performance / G-Mode / Custom:托盘图标温度刷新,风扇行为变化可闻
 - [ ] Custom 模式拖曲线点 → 松手后 ≤2s 风扇转速变化(2% 死区内不抖动)
-- [ ] 曲线含 ≤2 点/重复温度时被拒绝(UI 不允许生成)
+- [ ] 曲线保留至少 2 点，重复温度不生成；重置恢复默认曲线
 - [ ] 重启应用后曲线/模式/场景参数保留(dell-toolbox.ini)
 
 ## 场景检测
@@ -22,15 +23,15 @@
 - [ ] 关游戏 → 30s 后回到 baseline/Balanced
 - [ ] GPU 60%+ 压力测试(gfurmark/3DMark)同样触发;55–60% 区间不反复切换
 
-## Failsafe
-- [ ] 压力测试将 CPU 推到 ≥95°C 持续 8s → 模式强制 G-Mode,active=failsafe
-- [ ] 降温到 <90°C(<80°C GPU)持续 60s → 恢复原模式
-- [ ] 拔掉温度读数(如暂停 WMI)→ failsafe 行为保守(视为危险)
-
-## 性能页
-- [ ] PL1/PL2 滑条 → active=manual,HWiNFO 核验 PL1 生效(v1 若未接 XTU 则标注)
-- [ ] Resume auto → 回到 scene/baseline
-- [ ] 手动 30 分钟后自动过期回自动策略
+## 性能页与 UI
+- [ ] 下拉框无黑色原生边框，100% / 150% / 200% DPI 均可读
+- [ ] 打开电源方案下拉并用键盘高亮第二项，等待 5 秒仍保持高亮
+- [ ] 选择电源方案后回读确认实际方案；powercfg 失败不显示伪成功
+- [ ] 新建/编辑/保存功耗草稿明确显示未应用，不改变 CPU/GPU 功耗、不切换 active=manual
+- [ ] 场景确认时间 120 秒切为 2 分钟再切回，配置仍为 120 秒
+- [ ] Restore defaults 后开关、场景 Enabled、单位范围与配置一致
+- [ ] AWCC monitor-only 时电源方案、充电模式不写硬件
+- [ ] 本版本没有应用层 Failsafe 策略或 Resume auto 按钮，不按旧版本清单验证
 
 ## 电池页
 - [ ] 充电模式切换后 `cctk --PrimaryBattChargeCfg` 输出一致

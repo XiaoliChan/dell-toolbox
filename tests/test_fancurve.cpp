@@ -27,9 +27,9 @@ private slots:
         auto c = FanCurve::defaultCurve();
         QCOMPARE(c.hysteresisC, 3);
         // Segment (40,30)-(60,45), dx=20 dy=15:
-        // rising 45C -> 30 + (75+10)/20 = 34; falling 45C evaluates 42C -> 30 + (30+10)/20 = 32
+        // rising 45C -> 30 + (75+10)/20 = 34; falling 45C evaluates 48C -> 30 + (120+10)/20 = 36
         QCOMPARE(c.percentFor(45, false), 34);
-        QCOMPARE(c.percentFor(45, true), 32);
+        QCOMPARE(c.percentFor(45, true), 36);
     }
 
     void setPointsSortsByTemperature() {

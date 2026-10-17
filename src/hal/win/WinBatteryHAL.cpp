@@ -41,9 +41,10 @@ std::optional<int> queryCycleCountFromDriver() {
         if (handle == INVALID_HANDLE_VALUE)
             continue;
         ULONG tag = 0;
+        ULONG timeout = 0;
         DWORD returned = 0;
-        if (DeviceIoControl(handle, kIoctlBatteryQueryTag, nullptr, 0, &tag, sizeof(tag), &returned, nullptr) &&
-            tag != 0) {
+        if (DeviceIoControl(handle, kIoctlBatteryQueryTag, &timeout, sizeof(timeout), &tag, sizeof(tag), &returned, nullptr) &&
+            returned == sizeof(tag) && tag != 0) {
             struct QueryInfo {
                 ULONG tag;
                 ULONG level; // 0 = BatteryInformation
@@ -63,7 +64,8 @@ std::optional<int> queryCycleCountFromDriver() {
             } info = {};
             static_assert(sizeof(BatteryInformation) == 36);
             if (DeviceIoControl(handle, kIoctlBatteryQueryInformation, &query, sizeof(query), &info, sizeof(info),
-                                &returned, nullptr))
+                                &returned, nullptr) && returned >= sizeof(info) && info.cycleCount > 0
+                && info.cycleCount <= 0x7FFFFFFFu)
                 found = static_cast<int>(info.cycleCount);
         }
         CloseHandle(handle);

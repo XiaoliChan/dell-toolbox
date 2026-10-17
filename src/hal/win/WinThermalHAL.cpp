@@ -2,18 +2,17 @@
 
 #include "core/Logger.h"
 
-#include <QThread>
-
 namespace dtb::win {
 
 namespace {
 // Full AWCC profile-code table, exactly the enum awcc_thermal_profile of the
 // Linux alienware-wmi driver (the community reference for this firmware
-// interface), bucketed into our six UI modes. 0x00 is deliberately unmapped:
-// "Custom" here is our own fan-curve feature, never a firmware state we would
-// want to adopt from a read.
+// interface), bucketed into our six UI modes. Custom is the manual firmware
+// profile; the controller decides whether local fan curves may be applied.
 std::optional<ThermalMode> modeFromProfileCode(int code) {
     switch (code) {
+    case 0x00:
+        return ThermalMode::Custom;
     case 0x96:
         return ThermalMode::Quiet; // legacy quiet
     case 0x97:
@@ -118,7 +117,7 @@ QVector<HalFanInfo> WinThermalHAL::enumerateFans() {
         if (!count || *count <= 0)
             continue;
         const auto sensor = getFanSensorsOp(2, fan, 0); // first related sensor id
-        if (sensor)
+        if (sensor && *sensor >= kSensorFirst && *sensor <= kSensorLast)
             m_fans.append({fan, *sensor});
     }
     return m_fans;
@@ -148,6 +147,7 @@ bool WinThermalHAL::applyModeByte(int modeByte) {
 }
 
 bool WinThermalHAL::setMode(ThermalMode mode) {
+    cancelPendingModeWrite();
     if (!m_wmi.valid())
         return false;
 
@@ -157,13 +157,16 @@ bool WinThermalHAL::setMode(ThermalMode mode) {
     // op 0x01 engages a latch that op 0x00 does not release on this
     // firmware, and the stuck latch made the EC re-assert 0xAB over every
     // later mode write (the bounce-back bug). GameShiftStatus stays
-    // read-only (op 0x02, readCurrentProfile fallback).
+    // read-only (op 0x02, explicit diagnostics only).
 
     // Balanced has a legacy (0x97) and a USTT (0xA0) encoding; probe USTT once
     // and remember which the machine accepts (tcc-g15 semantics).
     if (mode == ThermalMode::Balanced) {
         if (m_balancedUstt == TriState::Unknown) {
-            m_balancedUstt = applyModeByte(kModeBalancedUstt) ? TriState::Yes : TriState::No;
+            const bool accepted = applyModeByte(kModeBalancedUstt);
+            m_balancedUstt = accepted ? TriState::Yes : TriState::No;
+            if (accepted)
+                return true;
         }
         return applyModeByte(m_balancedUstt == TriState::Yes ? kModeBalancedUstt : kModeBalancedLegacy);
     }
@@ -176,27 +179,8 @@ bool WinThermalHAL::setMode(ThermalMode mode) {
         return ok;
     }
 
-    if (mode == ThermalMode::Performance) {
-        // Try each candidate table and keep the first one the firmware
-        // actually RETAINS (raw readback code matches). A write can return
-        // 'ok' for a table the EC then silently reverts - the bounce-back.
-        static const int kPerfCodes[] = {kModePerformanceUstt, kModePerformanceLegacy,
-                                         kModePerformanceAlt};
-        for (int code : kPerfCodes) {
-            if (!applyModeByte(code))
-                continue; // write rejected outright
-            for (int probe = 0; probe < 3; ++probe) {
-                if (const auto raw = thermalInformationOp(kOpGetCurrentProfile, 0);
-                    raw && (*raw & 0xFF) == code) {
-                    dtbLog(info) << "performance table locked: 0x" << Qt::hex << code;
-                    return true;
-                }
-                QThread::msleep(120); // readback can lag the write
-            }
-            dtbLog(warn) << "performance table 0x" << Qt::hex << code << "not retained";
-        }
-        return false;
-    }
+    if (mode == ThermalMode::Performance)
+        return startPerformanceCandidate(0);
 
     int value = kModeCustom;
     switch (mode) {
@@ -206,14 +190,50 @@ bool WinThermalHAL::setMode(ThermalMode mode) {
     case ThermalMode::Cool:
         value = kModeCoolUstt;
         break;
-    case ThermalMode::Performance:
-        value = kModePerformanceUstt;
-        break;
-    default:
+    case ThermalMode::Custom:
         value = kModeCustom;
         break;
+    default:
+        return false;
     }
     return applyModeByte(value);
+}
+
+bool WinThermalHAL::startPerformanceCandidate(int first) {
+    for (int i = first; i < 3; ++i) {
+        if (!applyModeByte(kPerfCodes[i]))
+            continue;
+        m_perfCandidate = i;
+        m_perfProbe.reset();
+        m_perfProbeTimer.start();
+        // Accepted is not retained: verification runs on subsequent ticks,
+        // never by sleeping on the UI/controller thread.
+        return true;
+    }
+    cancelPendingModeWrite();
+    dtbLog(warn) << "no performance table retained; adopting firmware readback";
+    return false;
+}
+
+void WinThermalHAL::pollPendingModeWrite() {
+    if (!hasPendingModeWrite() || m_perfProbeTimer.elapsed() < 500)
+        return;
+    m_perfProbeTimer.restart();
+    const int code = kPerfCodes[m_perfCandidate];
+    const auto raw = thermalInformationOp(kOpGetCurrentProfile, 0);
+    const auto result = m_perfProbe.observe(raw && (*raw & 0xFF) == code);
+    if (result == ModeWriteProbe::Result::Retained) {
+        dtbLog(info) << "performance table verified across ticks: 0x" << Qt::hex << code;
+        cancelPendingModeWrite();
+    } else if (result == ModeWriteProbe::Result::Rejected) {
+        startPerformanceCandidate(m_perfCandidate + 1);
+    }
+}
+
+void WinThermalHAL::cancelPendingModeWrite() {
+    m_perfCandidate = -1;
+    m_perfProbe.reset();
+    m_perfProbeTimer.invalidate();
 }
 
 // Diagnostic/recovery only (never called by the control loop): send one raw

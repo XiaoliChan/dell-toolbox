@@ -55,19 +55,22 @@ constexpr unsigned char kCommandGet = 3;
 
 std::vector<unsigned char> variantToBytes(const VARIANT& v) {
     std::vector<unsigned char> out;
-    if (v.vt != (VT_ARRAY | VT_UI1) || !v.parray)
+    if (v.vt != (VT_ARRAY | VT_UI1) || !v.parray
+        || SafeArrayGetDim(v.parray) != 1 || SafeArrayGetElemsize(v.parray) != 1)
         return out;
     SAFEARRAY* psa = v.parray;
     LONG lo = 0, hi = 0;
-    SafeArrayGetLBound(psa, 1, &lo);
-    SafeArrayGetUBound(psa, 1, &hi);
-    if (hi < lo)
+    if (FAILED(SafeArrayGetLBound(psa, 1, &lo))
+        || FAILED(SafeArrayGetUBound(psa, 1, &hi)) || hi < lo
+        || static_cast<long long>(hi) - lo + 1 > 65536)
         return out;
     out.resize(hi - lo + 1);
     unsigned char* data = nullptr;
     if (SUCCEEDED(SafeArrayAccessData(psa, reinterpret_cast<void**>(&data)))) {
         memcpy(out.data(), data, out.size());
         SafeArrayUnaccessData(psa);
+    } else {
+        out.clear();
     }
     return out;
 }
@@ -120,6 +123,7 @@ void DellAcpiChannel::initialize() {
         return;
     }
     m_valid = true;
+    m_transport = QStringLiteral("bfn-wmi");
     // Reset whatever the service size-probing above may have left behind; the
     // QDATA descriptor below (when present) is the authoritative length.
     m_bufferLength = 128;
@@ -145,8 +149,10 @@ void DellAcpiChannel::initialize() {
             return;
         VARIANT qdata;
         VariantInit(&qdata);
-        if (FAILED(obj->Get(L"QDATA", 0, &qdata, nullptr, nullptr)))
+        if (FAILED(obj->Get(L"QDATA", 0, &qdata, nullptr, nullptr))) {
+            VariantClear(&qdata);
             return;
+        }
         std::vector<unsigned char> bytes;
         if (qdata.vt == VT_UNKNOWN && qdata.punkVal) {
             Microsoft::WRL::ComPtr<IWbemClassObject> qobj;
@@ -297,8 +303,11 @@ bool DellAcpiChannel::execute(std::vector<unsigned char>& buffer) {
 
         VARIANT path;
         VariantInit(&path);
-        if (FAILED(obj->Get(L"__PATH", 0, &path, nullptr, nullptr)))
-            return fail("Get(__PATH)", hr);
+        hr = obj->Get(L"__PATH", 0, &path, nullptr, nullptr);
+        if (FAILED(hr) || path.vt != VT_BSTR || !path.bstrVal) {
+            VariantClear(&path);
+            return fail("Get(__PATH)", FAILED(hr) ? hr : E_INVALIDARG);
+        }
         Microsoft::WRL::ComPtr<IWbemClassObject> outParams;
         hr = m_wmi.services()->ExecMethod(path.bstrVal, _bstr_t(L"DoBFn"), 0, nullptr, inInst.Get(),
                                           outParams.GetAddressOf(), nullptr);
@@ -309,8 +318,10 @@ bool DellAcpiChannel::execute(std::vector<unsigned char>& buffer) {
         VARIANT outData;
         VariantInit(&outData);
         hr = outParams->Get(_bstr_t(L"Data"), 0, &outData, nullptr, nullptr);
-        if (FAILED(hr))
+        if (FAILED(hr)) {
+            VariantClear(&outData);
             return fail("Get(out Data)", hr);
+        }
         // outData is VT_UNKNOWN wrapping an IWbemClassObject (BDat instance).
         std::vector<unsigned char> result;
         if (outData.vt == VT_UNKNOWN && outData.punkVal) {
@@ -320,13 +331,13 @@ bool DellAcpiChannel::execute(std::vector<unsigned char>& buffer) {
                 VariantInit(&bytes);
                 if (SUCCEEDED(outObj->Get(L"Bytes", 0, &bytes, nullptr, nullptr))) {
                     result = variantToBytes(bytes);
-                    VariantClear(&bytes);
                 }
+                VariantClear(&bytes);
             }
         }
         VariantClear(&outData);
-        if (result.empty())
-            return fail("Decode(out Data empty)", S_OK);
+        if (result.size() < 44)
+            return fail("Decode(out Data truncated)", E_FAIL);
         const size_t n = (std::min)(result.size(), buffer.size());
         memcpy(buffer.data(), result.data(), n);
         return true;

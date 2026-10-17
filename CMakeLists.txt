@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(dell-toolbox
-    VERSION 0.1.0
+    VERSION 1.1.2
     DESCRIPTION "Open-source Dell toolbox: thermal control, power management"
     LANGUAGES CXX)
 
@@ -10,7 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON) # qrc files listed as sources get compiled (qt_add_resources silently no-ops here)
 
-option(DTB_HAL "Hardware backend: 'win' (real) or 'mock' (dev/tests)" "mock")
+set(DTB_HAL "mock" CACHE STRING "Hardware backend: win (real) or mock (dev/tests)")
+set_property(CACHE DTB_HAL PROPERTY STRINGS win mock)
 option(DTB_REQUIRE_ADMIN "Embed the requireAdministrator manifest" ON)
 if(NOT DTB_HAL MATCHES "^(win|mock)$")
     message(FATAL_ERROR "DTB_HAL must be 'win' or 'mock', got '${DTB_HAL}'")

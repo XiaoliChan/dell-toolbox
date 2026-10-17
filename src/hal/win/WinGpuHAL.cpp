@@ -1,4 +1,5 @@
 #include "hal/win/WinGpuHAL.h"
+#include "hal/win/NvApiTypes.h"
 
 #include <QLoggingCategory>
 #include <QString>
@@ -9,48 +10,9 @@ namespace dtb::win {
 namespace {
 Q_LOGGING_CATEGORY(lcGpu, "dtb.gpu")
 
-// nvapi_QueryInterface ordinal IDs (published by NVIDIA in the open nvapi
-// repo's samples and mirrored in open-source monitors).
-constexpr unsigned int kIdInitialize = 0x0150E828;
-constexpr unsigned int kIdEnumPhysicalGPUs = 0xE5AC921F;
-constexpr unsigned int kIdGetDynamicPstatesInfoEx = 0x60DED2ED;
-constexpr unsigned int kIdGetThermalSettings = 0x363D1D3F;
-
-typedef void* (*NvApi_QueryInterface_t)(unsigned int);
-typedef int (*NvApi_Initialize_t)();
-typedef int (*NvApi_EnumPhysicalGPUs_t)(void** handles, unsigned int* count);
-
-struct NvDynamicPstate {
-    unsigned int present;
-    unsigned int percentage;
-};
-struct NvGpuDynamicPstatesInfoEx {
-    unsigned int version;
-    unsigned int flags;
-    NvDynamicPstate util[32];
-    NvDynamicPstate current;
-    unsigned int flags2;
-};
-struct NvSensor {
-    unsigned int sensorId; // 1 = GPU core
-    int currentTemp;
-    int defaultMaxTemp;
-    int maxTemp;
-    int flags;
-};
-struct NvGpuThermalSettings {
-    unsigned int version;
-    unsigned int count;
-    NvSensor sensor[32];
-};
-typedef int (*NvApi_GetDynamicPstatesInfoEx_t)(void*, NvGpuDynamicPstatesInfoEx*);
-typedef int (*NvApi_GetThermalSettings_t)(void*, NvGpuThermalSettings*);
-
 template <typename Fn>
 Fn query(void* module, unsigned int id) {
-    static NvApi_QueryInterface_t queryInterface = nullptr;
-    if (!queryInterface)
-        queryInterface = reinterpret_cast<NvApi_QueryInterface_t>(GetProcAddress(static_cast<HMODULE>(module), "nvapi_QueryInterface"));
+    const auto queryInterface = reinterpret_cast<NvApi_QueryInterface_t>(GetProcAddress(static_cast<HMODULE>(module), "nvapi_QueryInterface"));
     if (!queryInterface)
         return nullptr;
     return reinterpret_cast<Fn>(queryInterface(id));
@@ -59,7 +21,24 @@ Fn query(void* module, unsigned int id) {
 
 WinGpuHAL::WinGpuHAL() = default;
 
-WinGpuHAL::~WinGpuHAL() = default;
+WinGpuHAL::~WinGpuHAL() {
+    if (m_nvml) {
+        if (m_nvmlInited) {
+            auto shutdown = reinterpret_cast<int (*)()>(
+                GetProcAddress(static_cast<HMODULE>(m_nvml), "nvmlShutdown"));
+            if (shutdown)
+                shutdown();
+        }
+        FreeLibrary(static_cast<HMODULE>(m_nvml));
+    }
+    if (m_nvapi) {
+        if (m_nvapiInited) {
+            if (auto unload = query<int (*)()>(m_nvapi, kIdUnload))
+                unload();
+        }
+        FreeLibrary(static_cast<HMODULE>(m_nvapi));
+    }
+}
 
 bool WinGpuHAL::available() { return ensureLoaded(); }
 
@@ -70,7 +49,7 @@ bool WinGpuHAL::ensureLoaded() {
         return false;
     m_loaded = true;
 
-    HMODULE module = LoadLibraryW(L"nvapi64.dll");
+    HMODULE module = LoadLibraryExW(L"nvapi64.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!module) {
         m_loadFailed = true;
         return false; // no NVIDIA driver present; not an error on hybrid GPUs
@@ -82,6 +61,7 @@ bool WinGpuHAL::ensureLoaded() {
         m_loadFailed = true;
         return false;
     }
+    m_nvapiInited = true;
     auto enumerate = query<NvApi_EnumPhysicalGPUs_t>(module, kIdEnumPhysicalGPUs);
     if (!enumerate) {
         m_loadFailed = true;
@@ -106,14 +86,14 @@ GpuInfo WinGpuHAL::read() {
     if (pstates) {
         NvGpuDynamicPstatesInfoEx ex = {};
         ex.version = sizeof(ex) | 0x10000; // MAKE_NVAPI_VERSION(..., 1)
-        if (pstates(m_gpuHandle, &ex) == 0 && ex.util[0].present)
+        if (pstates(m_gpuHandle, &ex) == 0 && (ex.util[0].present & 1u) && ex.util[0].percentage <= 100)
             info.utilPercent = static_cast<int>(ex.util[0].percentage);
     }
     auto thermal = query<NvApi_GetThermalSettings_t>(m_nvapi, kIdGetThermalSettings);
     if (thermal) {
         NvGpuThermalSettings ts = {};
         ts.version = sizeof(ts) | 0x20000; // MAKE_NVAPI_VERSION(..., 2)
-        if (thermal(m_gpuHandle, &ts) == 0 && ts.count >= 1 && ts.sensor[0].sensorId == 1)
+        if (thermal(m_gpuHandle, 0, &ts) == 0 && ts.count >= 1 && ts.count <= 3 && ts.sensor[0].target == 1)
             info.tempC = ts.sensor[0].currentTemp;
     }
     info.powerW = readPowerW();
@@ -127,7 +107,7 @@ int WinGpuHAL::readPowerW() {
     if (m_nvmlFailed)
         return -1;
     if (!m_nvml) {
-        m_nvml = LoadLibraryW(L"nvml.dll");
+        m_nvml = LoadLibraryExW(L"nvml.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (!m_nvml) {
             m_nvmlFailed = true;
             return -1;

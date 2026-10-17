@@ -8,9 +8,16 @@ namespace dtb::win {
 namespace {
 Q_LOGGING_CATEGORY(lcWmi, "dtb.wmi")
 
-bool ensureComForThisThread() {
-    const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    return SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE;
+std::optional<int> variantInt(const VARIANT& v) {
+    switch (v.vt) {
+    case VT_I4: return static_cast<int>(v.lVal);
+    case VT_UI4: return static_cast<int>(v.ulVal);
+    case VT_I2: return static_cast<int>(v.iVal);
+    case VT_UI2: return static_cast<int>(v.uiVal);
+    case VT_INT: return v.intVal;
+    case VT_UINT: return static_cast<int>(v.uintVal);
+    default: return std::nullopt;
+    }
 }
 } // namespace
 
@@ -18,14 +25,23 @@ WmiConnection::WmiConnection(const wchar_t* namespace_) {
     connect(namespace_);
 }
 
-WmiConnection::~WmiConnection() = default;
+WmiConnection::~WmiConnection() {
+    m_services.Reset();
+    m_locator.Reset();
+    if (m_comInitialized)
+        CoUninitialize();
+}
 
 bool WmiConnection::connect(const wchar_t* namespace_) {
-    if (!ensureComForThisThread())
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    m_comInitialized = SUCCEEDED(initialized);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
         return false;
-    // One process-wide security blanket; repeated calls are fine (S_FALSE).
-    CoInitializeSecurity(nullptr, -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_DEFAULT,
+    // One process-wide security blanket; RPC_E_TOO_LATE means already configured.
+    const HRESULT security = CoInitializeSecurity(nullptr, -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_DEFAULT,
                          RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE, nullptr);
+    if (FAILED(security) && security != RPC_E_TOO_LATE)
+        return false;
     HRESULT hr = CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&m_locator));
     if (FAILED(hr))
         return false;
@@ -35,8 +51,12 @@ bool WmiConnection::connect(const wchar_t* namespace_) {
         m_locator.Reset();
         return false;
     }
-    CoSetProxyBlanket(m_services.Get(), RPC_C_AUTHN_WINNT, RPC_C_AUTHN_NONE, nullptr, RPC_C_AUTHN_LEVEL_CALL,
+    hr = CoSetProxyBlanket(m_services.Get(), RPC_C_AUTHN_WINNT, RPC_C_AUTHN_NONE, nullptr, RPC_C_AUTHN_LEVEL_CALL,
                       RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE);
+    if (FAILED(hr)) {
+        m_services.Reset();
+        return false;
+    }
     return true;
 }
 
@@ -88,8 +108,11 @@ std::optional<int> WmiConnection::callInstanceMethod(const wchar_t* className, c
            && returned > 0) {
         VARIANT path;
         VariantInit(&path);
-        if (FAILED(instance->Get(L"__PATH", 0, &path, nullptr, nullptr)))
+        if (FAILED(instance->Get(L"__PATH", 0, &path, nullptr, nullptr))
+            || path.vt != VT_BSTR || !path.bstrVal) {
+            VariantClear(&path);
             continue;
+        }
 
         Microsoft::WRL::ComPtr<IWbemClassObject> inParams;
         if (SUCCEEDED(inSig->SpawnInstance(0, inParams.GetAddressOf()))) {
@@ -134,10 +157,8 @@ std::optional<int> WmiConnection::firstOutValue(IWbemClassObject* outParams) {
             if (_wcsicmp(pname, L"ReturnValue") != 0) {
                 VARIANT val;
                 VariantInit(&val);
-                if (SUCCEEDED(outParams->Get(pname, 0, &val, nullptr, nullptr))
-                    && (val.vt == VT_I4 || val.vt == VT_UI4 || val.vt == VT_I2 || val.vt == VT_INT)) {
-                    result = static_cast<int>(val.lVal);
-                }
+                if (SUCCEEDED(outParams->Get(pname, 0, &val, nullptr, nullptr)))
+                    result = variantInt(val);
                 VariantClear(&val);
             }
             SysFreeString(pname);
@@ -169,22 +190,22 @@ bool WmiConnection::execQuery(const wchar_t* namespace_, const wchar_t* wql,
 std::optional<int> WmiConnection::readIntProp(IWbemClassObject* obj, const wchar_t* prop) {
     VARIANT v;
     VariantInit(&v);
-    if (FAILED(obj->Get(prop, 0, &v, nullptr, nullptr)))
-        return std::nullopt;
-    if (v.vt == VT_I4 || v.vt == VT_UI4 || v.vt == VT_I2 || v.vt == VT_INT || v.vt == VT_UI2) {
-        const int out = static_cast<int>(v.lVal);
+    if (FAILED(obj->Get(prop, 0, &v, nullptr, nullptr))) {
         VariantClear(&v);
-        return out;
+        return std::nullopt;
     }
+    const auto result = variantInt(v);
     VariantClear(&v);
-    return std::nullopt;
+    return result;
 }
 
 std::optional<bool> WmiConnection::readBoolProp(IWbemClassObject* obj, const wchar_t* prop) {
     VARIANT v;
     VariantInit(&v);
-    if (FAILED(obj->Get(prop, 0, &v, nullptr, nullptr)))
+    if (FAILED(obj->Get(prop, 0, &v, nullptr, nullptr))) {
+        VariantClear(&v);
         return std::nullopt;
+    }
     if (v.vt == VT_BOOL) {
         const bool out = v.boolVal != VARIANT_FALSE;
         VariantClear(&v);
@@ -197,8 +218,10 @@ std::optional<bool> WmiConnection::readBoolProp(IWbemClassObject* obj, const wch
 std::optional<QString> WmiConnection::readStringProp(IWbemClassObject* obj, const wchar_t* prop) {
     VARIANT v;
     VariantInit(&v);
-    if (FAILED(obj->Get(prop, 0, &v, nullptr, nullptr)))
+    if (FAILED(obj->Get(prop, 0, &v, nullptr, nullptr))) {
+        VariantClear(&v);
         return std::nullopt;
+    }
     if (v.vt == VT_BSTR && v.bstrVal) {
         QString out = QString::fromWCharArray(v.bstrVal, SysStringLen(v.bstrVal));
         VariantClear(&v);

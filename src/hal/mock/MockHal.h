@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QTimer>
 #include <memory>
 #include <vector>
 #include <QString>
@@ -68,6 +69,7 @@ public:
     QString currentChargeMode() const { return m_chargeMode; }
 
 private:
+    std::unique_ptr<QTimer> m_timer;
     std::vector<std::shared_ptr<void>> m_setObjects; // keeps every makeSet adapter alive
     Scenario m_scenario;
     int m_tick = 0;

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/Snapshot.h"
+#include "hal/ModeWriteProbe.h"
+#include <QElapsedTimer>
 #include "hal/win/DellAcpiChannel.h"
 #include "hal/win/WmiConnection.h"
 
@@ -16,6 +18,9 @@ public:
     int sensorTemp(SensorId id) override;
     int fanRpm(FanId id) override;
     bool setMode(ThermalMode mode) override;
+    void pollPendingModeWrite() override;
+    void cancelPendingModeWrite() override;
+    bool hasPendingModeWrite() const override { return m_perfCandidate >= 0; }
     bool setFanPercent(FanId fan, int percent) override;
     bool available() override;
     bool supportsGMode() override { return m_gMode != TriState::No; }
@@ -24,6 +29,10 @@ public:
     int rawGameShiftOp(int op);
 
 private:
+    bool startPerformanceCandidate(int first);
+    int m_perfCandidate = -1;
+    ModeWriteProbe m_perfProbe;
+    QElapsedTimer m_perfProbeTimer;
     bool applyModeByte(int modeByte);
     std::optional<int> thermalInformationOp(int op, int id);
     std::optional<int> getFanSensorsOp(int op, int fan, int index = 0);
@@ -60,6 +69,7 @@ private:
     static constexpr int kModePerformanceUstt = 0xA4;
     static constexpr int kModePerformanceLegacy = 0x99;
     static constexpr int kModePerformanceAlt = 0xA1; // quiet balanced-perf table
+    static constexpr int kPerfCodes[] = {kModePerformanceUstt, kModePerformanceLegacy, kModePerformanceAlt};
     static constexpr int kModeGMode = 0xAB;
 };
 

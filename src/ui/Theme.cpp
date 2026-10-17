@@ -3,6 +3,7 @@
 #include <QAbstractItemView>
 #include <QComboBox>
 #include <QFont>
+#include <QStyledItemDelegate>
 
 namespace dtb::ui {
 
@@ -104,12 +105,13 @@ QComboBox::down-arrow {
     image: url(:/res/combo-arrow.png); width: 10px; height: 10px; margin-right: 8px;
 }
 QComboBox QAbstractItemView {
-    background: #17181d; border: 1px solid #2a2d35;
+    background: #17181d; border: 1px solid #2a2d35; border-radius: 10px; padding: 4px;
     color: #e9ebee; selection-background-color: #4f8cff; selection-color: #ffffff;
     outline: 0;
 }
-QComboBox QAbstractItemView::item { min-height: 26px; padding: 4px 10px; border-radius: 6px; }
+QComboBox QAbstractItemView::item { min-height: 28px; padding: 5px 10px; border-radius: 6px; }
 QComboBox QAbstractItemView::item:hover { background: #23252c; }
+QComboBox QAbstractItemView::item:selected { background: #4f8cff; color: #ffffff; }
 
 QTextEdit, QLineEdit, QSpinBox {
     background: #1a1c22; color: #e9ebee; border: 1px solid #26282f;
@@ -144,7 +146,9 @@ class ComboPopupSoftener : public QObject {
 public:
     using QObject::QObject;
     static void mark(QComboBox* combo) {
-        combo->view()->window()->setAttribute(Qt::WA_TranslucentBackground);
+        auto* popup = combo->view()->window();
+        popup->setWindowFlag(Qt::FramelessWindowHint, true);
+        popup->setAttribute(Qt::WA_TranslucentBackground);
     }
     bool eventFilter(QObject* watched, QEvent* event) override {
         if (event->type() == QEvent::ChildAdded)
@@ -158,6 +162,8 @@ public:
 void softenComboPopups(QWidget* root) {
     const QList<QComboBox*> combos = root->findChildren<QComboBox*>();
     for (QComboBox* combo : combos) {
+        // The default combo delegate can use menu metrics and ignore item QSS.
+        combo->setItemDelegate(new QStyledItemDelegate(combo));
         ComboPopupSoftener::mark(combo); // forces view + container creation
         combo->installEventFilter(new ComboPopupSoftener(combo)); // parented: dies with combo
     }

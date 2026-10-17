@@ -16,6 +16,7 @@
 AppId={{7A6E2D9B-52C4-4B8A-9C31-D3F0A1B2C701}
 AppName={#AppName}
 AppVersion={#AppVersion}
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DefaultDirName={autopf64}\Dell Toolbox
 DefaultGroupName={#AppName}

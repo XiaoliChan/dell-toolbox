@@ -69,7 +69,7 @@ HalSet MockHal::makeSet() {
     auto charge = std::make_shared<MockCharge>(this);
     // HalSet carries raw pointers; ownership stays here so repeated makeSet
     // calls (one per test rig) never leak the adapters.
-    m_setObjects = {thermal, battery, gpu, load, charge};
+    m_setObjects.insert(m_setObjects.end(), {thermal, battery, gpu, load, charge});
     set.thermal = thermal.get();
     set.battery = battery.get();
     set.gpu = gpu.get();
@@ -81,11 +81,11 @@ HalSet MockHal::makeSet() {
 MockHal::~MockHal() = default;
 
 void MockHal::enableAutoAdvance(int periodMs) {
-    // MockHal is not a QObject; the timer lives for the app lifetime (the
-    // mock itself does too).
-    auto* timer = new QTimer(qApp);
-    QTimer::connect(timer, &QTimer::timeout, nullptr, [this] { advanceScenario(); });
-    timer->start(periodMs);
+    if (!m_timer) {
+        m_timer = std::make_unique<QTimer>();
+        QTimer::connect(m_timer.get(), &QTimer::timeout, m_timer.get(), [this] { advanceScenario(); });
+    }
+    m_timer->start(qMax(1, periodMs));
     advanceScenario(); // first sample immediately
 }
 

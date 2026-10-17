@@ -145,6 +145,9 @@ QWidget* BatteryPage::buildModesCard() {
             rangeLayout->addWidget(new QLabel(tr("Stop"), rangeRow));
             rangeLayout->addWidget(m_stop, 1);
             rangeLayout->addWidget(m_rangeLabel);
+            auto* applyRange = new QPushButton(tr("Apply thresholds"), rangeRow);
+            rangeLayout->addWidget(applyRange);
+            connect(applyRange, &QPushButton::clicked, this, &BatteryPage::onModeChosen);
             layout->addWidget(rangeRow);
             connect(m_start, &QSlider::valueChanged, this, &BatteryPage::onCustomRangeChanged);
             connect(m_stop, &QSlider::valueChanged, this, &BatteryPage::onCustomRangeChanged);
@@ -155,12 +158,14 @@ QWidget* BatteryPage::buildModesCard() {
     }
     connect(m_modeGroup, &QButtonGroup::idClicked, this, &BatteryPage::onModeChosen);
     layout->addStretch(1);
+    box->setEnabled(!m_controller->passive());
     m_modesCard = box;
     m_modesLayout = layout;
     return box;
 }
 
 void BatteryPage::onSnapshot(const SystemSnapshot& s) {
+    if (m_modesCard) m_modesCard->setEnabled(!m_controller->passive());
     const BatteryInfo& b = s.battery;
     if (!b.present) {
         m_percent->setText(tr("No battery"));
@@ -188,6 +193,9 @@ void BatteryPage::onSnapshot(const SystemSnapshot& s) {
                                                    : (b.healthPercent >= 50 ? tr("Fair") : tr("Poor"));
         m_health->setText(QStringLiteral("%1% (%2)").arg(b.healthPercent).arg(grade));
     }
+    else {
+        m_health->setText(QStringLiteral("-"));
+    }
     m_cycles->setText(b.cycleCount >= 0 ? QString::number(b.cycleCount) : QString::fromUtf8("-"));
     m_design->setText(b.designCapacityMWh > 0
                           ? QStringLiteral("%1 Wh").arg(b.designCapacityMWh / 1000.0, 0, 'f', 1)
@@ -198,7 +206,7 @@ void BatteryPage::onSnapshot(const SystemSnapshot& s) {
     m_voltage->setText(b.voltageMV > 0 ? QStringLiteral("%1 V").arg(b.voltageMV / 1000.0, 0, 'f', 2)
                                        : QString::fromUtf8("-"));
     m_power->setText(b.rateMW != 0 ? QStringLiteral("%1%2 W")
-                                         .arg(b.rateMW > 0 ? QStringLiteral("+") : QString())
+                                         .arg(b.rateMW > 0 ? QStringLiteral("+") : QStringLiteral("-"))
                                          .arg(qAbs(b.rateMW) / 1000.0, 0, 'f', 1)
                                    : tr("Idle")); // full battery on AC: genuinely 0 W
     m_vendor->setText(b.vendor.isEmpty() ? QString::fromUtf8("-") : b.vendor);
@@ -227,7 +235,12 @@ void BatteryPage::onModeChosen() {
     QString value = modes[id].cctkValue;
     if (value == "custom" && m_start && m_stop)
         value += QStringLiteral(":%1-%2").arg(m_start->value()).arg(m_stop->value());
-    m_hal.charge->setMode(value);
+    if (m_controller->passive() || !m_hal.charge->setMode(value)) {
+        const QString current = m_hal.charge->currentMode().section(QLatin1Char(':'), 0, 0);
+        for (auto* button : m_modeGroup->buttons())
+            button->setChecked(button->property("chargeKey").toString() == current);
+        m_modesSource->setText(tr("Charging mode was not applied (monitor-only or backend rejected it)."));
+    }
 }
 
 } // namespace dtb::ui

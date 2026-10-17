@@ -9,12 +9,11 @@ QString systemModel() {
     if (!cimv2.valid())
         return {};
     QString model;
-    cimv2.execQuery(L"ROOT\\CIMV2", L"SELECT Model, Version FROM Win32_ComputerSystemProduct",
+    cimv2.execQuery(L"ROOT\\CIMV2", L"SELECT Model FROM Win32_ComputerSystem",
                     [&](IWbemClassObject* obj) {
                         if (model.isEmpty()) {
                             const auto m = WmiConnection::readStringProp(obj, L"Model");
-                            const auto v = WmiConnection::readStringProp(obj, L"Version");
-                            model = (m && !m->isEmpty()) ? *m : (v ? *v : QString());
+                            model = m.value_or(QString());
                         }
                     });
     return model;

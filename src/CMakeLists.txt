@@ -16,14 +16,15 @@ add_subdirectory(ui)
 target_sources(dell-toolbox PRIVATE ${CMAKE_SOURCE_DIR}/res/resources.qrc)
 
 if(DTB_HAL STREQUAL "win")
+    target_compile_definitions(dell-toolbox PRIVATE DTB_HAL_WIN)
     add_subdirectory(hal/win)
     target_link_libraries(dell-toolbox PRIVATE dtb_hal_win)
     set_target_properties(dell-toolbox PROPERTIES WIN32_EXECUTABLE TRUE)
     # UAC lives in the linker-generated manifest (/MANIFESTUAC); a hand-written
     # rc manifest caused "side-by-side configuration is incorrect" on real
     # machines even though it parsed as valid XML.
+    target_sources(dell-toolbox PRIVATE ${CMAKE_SOURCE_DIR}/res/app.rc)
     if(DTB_REQUIRE_ADMIN)
-        target_sources(dell-toolbox PRIVATE ${CMAKE_SOURCE_DIR}/res/app.rc)
         target_link_options(dell-toolbox PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
     endif()
 endif()

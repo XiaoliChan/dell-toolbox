@@ -34,6 +34,7 @@ QPointF FanCurveEditor::pointToWidget(const QPair<int, int>& p) const {
 
 QPair<int, int> FanCurveEditor::widgetToPoint(const QPointF& pos) const {
     const QRect r = plotRect();
+    if (r.width() <= 0 || r.height() <= 0) return {kMinTempC, 0};
     int t = kMinTempC
             + int((pos.x() - r.left()) / r.width() * (kMaxTempC - kMinTempC) + 0.5);
     int p = int((r.bottom() - pos.y()) / r.height() * 100.0 + 0.5);
@@ -50,6 +51,7 @@ int FanCurveEditor::hitTest(const QPointF& pos) const {
 }
 
 void FanCurveEditor::setPoints(const QList<QPair<int, int>>& pts) {
+    m_dragIndex = -1;
     m_points = pts;
     update();
 }
@@ -157,8 +159,11 @@ void FanCurveEditor::contextMenuEvent(QContextMenuEvent* event) {
             });
         }
     } else {
-        connect(menu->addAction(tr("Add point here")), &QAction::triggered, this, [this, event] {
-            m_points.append(widgetToPoint(event->pos()));
+        const auto point = widgetToPoint(event->pos());
+        connect(menu->addAction(tr("Add point here")), &QAction::triggered, this, [this, point] {
+            for (const auto& existing : m_points)
+                if (existing.first == point.first) return;
+            m_points.append(point);
             commit();
         });
     }

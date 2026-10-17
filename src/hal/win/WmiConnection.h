@@ -20,6 +20,8 @@ class WmiConnection {
 public:
     explicit WmiConnection(const wchar_t* namespace_ = L"ROOT\\WMI");
     ~WmiConnection();
+    WmiConnection(const WmiConnection&) = delete;
+    WmiConnection& operator=(const WmiConnection&) = delete;
 
     bool valid() const { return m_services != nullptr; }
     // Direct access for specialised channels (Dell ACPI-WMI BFn/BDat).
@@ -43,6 +45,7 @@ public:
 private:
     bool connect(const wchar_t* namespace_);
 
+    bool m_comInitialized = false;
     Microsoft::WRL::ComPtr<IWbemLocator> m_locator;
     Microsoft::WRL::ComPtr<IWbemServices> m_services;
 };

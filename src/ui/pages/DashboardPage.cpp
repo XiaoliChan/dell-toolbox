@@ -5,7 +5,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-#ifdef Q_OS_WIN
+#ifdef DTB_HAL_WIN
 #include "hal/win/AwccConflict.h"
 #include "hal/win/WinSystemInfo.h"
 #endif
@@ -86,7 +86,7 @@ QWidget* DashboardPage::buildHeaderCard() {
     }
     card->headerLayout()->addWidget(m_statusChip);
 
-#ifdef Q_OS_WIN
+#ifdef DTB_HAL_WIN
     const QString model = dtb::win::systemModel();
     if (!model.isEmpty())
         m_model->setText(QStringLiteral("Dell %1").arg(model));

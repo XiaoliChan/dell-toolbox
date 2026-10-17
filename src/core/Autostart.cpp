@@ -34,7 +34,7 @@ QString xmlForExe() {
     QString xml = templateFile.open(QIODevice::ReadOnly)
                       ? QString::fromUtf8(templateFile.readAll())
                       : QString();
-    xml.replace(QStringLiteral("<!--EXE_FILE_PATH-->"), exePathBackslashes());
+    xml.replace(QStringLiteral("<!--EXE_FILE_PATH-->"), exePathBackslashes().toHtmlEscaped());
     xml.replace(QStringLiteral("encoding=\"UTF-8\""), QStringLiteral("encoding=\"UTF-16\""));
     return xml;
 }
@@ -54,8 +54,8 @@ bool createViaXml(const QString& xml) {
     create.start(QStringLiteral("schtasks"),
                  {QStringLiteral("/create"), QStringLiteral("/tn"), kTaskName, QStringLiteral("/xml"), xmlPath,
                   QStringLiteral("/f")});
-    create.waitForFinished(10000);
-    if (create.exitCode() == 0)
+    const bool finished = create.waitForFinished(10000);
+    if (finished && create.exitStatus() == QProcess::NormalExit && create.exitCode() == 0)
         return true;
     dtbLog(warn) << "autostart: XML create failed:" << createError(create);
     return false;
@@ -70,8 +70,8 @@ bool createViaCli(const QString& exe) {
                   QStringLiteral("/tr"), QStringLiteral("\"%1\" --minimized").arg(exe),
                   QStringLiteral("/sc"), QStringLiteral("onlogon"), QStringLiteral("/rl"),
                   QStringLiteral("highest"), QStringLiteral("/f")});
-    create.waitForFinished(10000);
-    if (create.exitCode() != 0) {
+    const bool finished = create.waitForFinished(10000);
+    if (!finished || create.exitStatus() != QProcess::NormalExit || create.exitCode() != 0) {
         dtbLog(warn) << "autostart: CLI create failed:" << createError(create);
         return false;
     }
@@ -82,8 +82,8 @@ bool createViaCli(const QString& exe) {
 bool Autostart::enabled() {
     QProcess query;
     query.start(QStringLiteral("schtasks"), {QStringLiteral("/query"), QStringLiteral("/tn"), kTaskName});
-    query.waitForFinished(5000);
-    return query.exitCode() == 0;
+    return query.waitForFinished(5000) && query.exitStatus() == QProcess::NormalExit
+           && query.exitCode() == 0;
 }
 
 bool Autostart::setEnabled(bool on) {
@@ -91,8 +91,8 @@ bool Autostart::setEnabled(bool on) {
         QProcess remove;
         remove.start(QStringLiteral("schtasks"),
                      {QStringLiteral("/delete"), QStringLiteral("/tn"), kTaskName, QStringLiteral("/f")});
-        remove.waitForFinished(5000);
-        return true;
+        return remove.waitForFinished(5000) && remove.exitStatus() == QProcess::NormalExit
+               && remove.exitCode() == 0;
     }
     if (createViaXml(xmlForExe()))
         return true;

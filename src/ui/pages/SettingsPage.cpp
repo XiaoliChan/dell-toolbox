@@ -84,6 +84,17 @@ QWidget* SettingsPage::buildGeneralCard() {
         m_controller->setForceControl(on);
     });
 
+    connect(m_controller, &Controller::configReloaded, this, [this, autostart, planSync, takeControl] {
+        const auto sync = [](QPushButton* button, bool on) {
+            const QSignalBlocker block(button);
+            button->setChecked(on);
+            button->setText(on ? tr("Enabled") : tr("Disabled"));
+        };
+        sync(autostart, m_config->loadAutostart());
+        sync(planSync, m_config->loadPowerPlanSync());
+        sync(takeControl, m_config->loadForceControl());
+    });
+
     auto* logLabel = new QLabel(tr("Log level"), box);
     m_logLevel = new QComboBox(box);
     m_logLevel->addItems({tr("Debug"), tr("Info"), tr("Warning"), tr("Error")});
@@ -126,28 +137,32 @@ QWidget* SettingsPage::buildAboutCard() {
 }
 
 void SettingsPage::onAutostartToggled(bool on) {
-    QPushButton* button = qobject_cast<QPushButton*>(sender());
+    auto* button = qobject_cast<QPushButton*>(sender());
+    const bool previous = m_config->loadAutostart();
+    const bool ok = dtb::Autostart::setEnabled(on);
+    const bool actual = ok ? on : previous;
     if (button) {
-        button->setText(on ? tr("Enabled") : tr("Disabled"));
-        button->setDisabled(true);
-        const bool ok = dtb::Autostart::setEnabled(on);
-        button->setEnabled(true);
-        if (!ok) {
-            button->setChecked(false);
-            button->setText(tr("Disabled"));
-        }
+        const QSignalBlocker block(button);
+        button->setChecked(actual);
+        button->setText(actual ? tr("Enabled") : tr("Disabled"));
+        button->setToolTip(ok ? QString() : tr("Could not update Windows startup task."));
     }
-    m_config->saveAutostart(on);
+    m_config->saveAutostart(actual);
 }
 
 void SettingsPage::onLogLevelChanged(int index) {
     m_config->saveLogLevel(index);
+    Logger::setLevel(static_cast<Logger::Level>(qBound(0, index, 3)));
     dtbLog(info) << "log level set to" << index;
 }
 
 void SettingsPage::onResetDefaults() {
+    const bool previousAutostart = m_config->loadAutostart();
+    const bool removed = !previousAutostart || dtb::Autostart::setEnabled(false);
     m_config->resetToDefaults();
+    if (!removed) m_config->saveAutostart(previousAutostart);
     m_logLevel->setCurrentIndex(1);
+    Logger::setLevel(Logger::info);
     // Re-reads mode/curves/boosts/scene into the running loop and
     // emits configReloaded() so every page refreshes its controls.
     m_controller->reloadFromConfig();

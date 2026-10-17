@@ -11,6 +11,10 @@ namespace dtb::win {
 // is installed. IDispatch-based; no type library needed at build time.
 class DpmServiceClient {
 public:
+    DpmServiceClient() = default;
+    ~DpmServiceClient();
+    DpmServiceClient(const DpmServiceClient&) = delete;
+    DpmServiceClient& operator=(const DpmServiceClient&) = delete;
     void initialize();
     bool valid() const { return m_dispatch != nullptr; }
 

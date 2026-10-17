@@ -123,7 +123,7 @@ int WinChargeHAL::runCctk(const QStringList& args, QString* stdoutText) {
         return -1;
     if (stdoutText)
         *stdoutText = QString::fromUtf8(process.readAllStandardOutput());
-    return process.exitCode();
+    return process.exitStatus() == QProcess::NormalExit ? process.exitCode() : -1;
 }
 
 QString WinChargeHAL::currentMode() {
@@ -154,19 +154,23 @@ QString WinChargeHAL::currentMode() {
 }
 
 bool WinChargeHAL::setMode(const QString& value) {
+    QString key = value;
+    int start = 0, stop = 0;
+    if (value.startsWith(QLatin1String("custom:"))) {
+        const auto match = QRegularExpression("^custom:([0-9]{1,3})-([0-9]{1,3})$").match(value);
+        if (!match.hasMatch())
+            return false;
+        key = QStringLiteral("custom");
+        start = match.captured(1).toInt();
+        stop = match.captured(2).toInt();
+        if (start < 50 || start > 95 || stop > 100 || stop - start < 5)
+            return false;
+    } else if (key == QLatin1String("custom")) {
+        return false; // Never write zero/uninitialized custom thresholds.
+    }
+    if (keyToAcpiMode(key) == 0)
+        return false;
     if (m_source == QLatin1String("dell-acpi")) {
-        // "custom:start-stop" carries the custom thresholds.
-        unsigned char start = 0, stop = 0;
-        QString key = value;
-        if (value.startsWith(QLatin1String("custom:"))) {
-            key = QStringLiteral("custom");
-            const QRegularExpression rangeRe("^custom:(\\d+)-(\\d+)$");
-            const auto m = rangeRe.match(value);
-            if (m.hasMatch()) {
-                start = static_cast<unsigned char>(m.captured(1).toInt());
-                stop = static_cast<unsigned char>(m.captured(2).toInt());
-            }
-        }
         const unsigned char mode = keyToAcpiMode(key);
         if (mode == 0)
             return false;

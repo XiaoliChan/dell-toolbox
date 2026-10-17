@@ -47,7 +47,7 @@ bool FanCurve::valid() const {
 int FanCurve::percentFor(int tempC, bool fallingEdge) const {
     if (!valid())
         return 100; // a broken curve must never stall the fans
-    const int t = fallingEdge ? tempC - hysteresisC : tempC;
+    const int t = fallingEdge ? tempC + hysteresisC : tempC;
     if (t <= m_points.first().first)
         return m_points.first().second;
     for (int i = 1; i < m_points.size(); ++i) {

@@ -23,7 +23,14 @@ IDispatch* dispatchFromProgId(const wchar_t* progId) {
 }
 } // namespace
 
+DpmServiceClient::~DpmServiceClient() {
+    if (m_dispatch)
+        static_cast<IDispatch*>(m_dispatch)->Release();
+}
+
 void DpmServiceClient::initialize() {
+    if (m_dispatch)
+        return;
     IDispatch* dispatch = dispatchFromProgId(kProgId);
     if (!dispatch) {
         qCInfo(lcDpm) << "DPM ComponentService not present";
@@ -72,6 +79,7 @@ bool DpmServiceClient::execute(std::vector<unsigned char>& buffer) {
     }
     SysFreeString(excep.bstrDescription);
     SysFreeString(excep.bstrSource);
+    SysFreeString(excep.bstrHelpFile);
     VariantClear(&result);
     if (FAILED(hr)) {
         SafeArrayDestroy(psa);
@@ -84,9 +92,23 @@ bool DpmServiceClient::execute(std::vector<unsigned char>& buffer) {
         }
         return false;
     }
-    memcpy(buffer.data(), psa->pvData, buffer.size());
+    LONG lower = 0, upper = -1;
+    if (!psa || SafeArrayGetDim(psa) != 1 || SafeArrayGetElemsize(psa) != 1
+        || FAILED(SafeArrayGetLBound(psa, 1, &lower))
+        || FAILED(SafeArrayGetUBound(psa, 1, &upper))
+        || static_cast<long long>(upper) - lower + 1 < static_cast<long long>(buffer.size())) {
+        if (psa)
+            SafeArrayDestroy(psa);
+        return false;
+    }
+    void* data = nullptr;
+    const bool accessed = SUCCEEDED(SafeArrayAccessData(psa, &data));
+    if (accessed) {
+        memcpy(buffer.data(), data, buffer.size());
+        SafeArrayUnaccessData(psa);
+    }
     SafeArrayDestroy(psa);
-    return true;
+    return accessed;
 }
 
 } // namespace dtb::win

@@ -67,10 +67,12 @@ private slots:
         QCOMPARE(t.mode.value_or(ThermalMode::GMode), ThermalMode::Custom);
         QCOMPARE(t.fanPercent.value(0x33), 58); // default curve at 70C (see test_fancurve)
 
-        // falling edge: 45 after 50 applies hysteresis
+        // Cooling from 50C to 45C retains extra airflow: +3C hysteresis
+        // evaluates 48C, not 42C (which would spin down prematurely).
         p.compute(snapTemps(50, 40));
         t = p.compute(snapTemps(45, 40));
-        QCOMPARE(t.fanPercent.value(0x33), 32); // evaluated at 42C
+        QCOMPARE(t.fanPercent.value(0x33), 36); // 30 + round(15 * 8 / 20)
+        QVERIFY(t.fanPercent.value(0x33) >= FanCurve::defaultCurve().percentFor(45, false));
     }
 
     void baselineNonCustomModeLeavesFansToBios() {

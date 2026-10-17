@@ -1,41 +1,54 @@
 name: windows build
 
 # Actions minutes are metered on private repos: build only release tags and
-# manual dispatches. Everyday verification runs locally (cmake+ctest on Linux,
-# the same CMake invocation with -DDTB_HAL=win on Windows).
+# manual dispatches. Both tests and release packaging run on Windows; mock HAL
+# is only a test backend, not a separately shipped client.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   tests:
-    name: core tests (linux, mock HAL)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    name: tests (Windows MSVC, mock HAL)
+    runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Install Qt 6.8.3 (MSVC)
+        uses: jurplel/install-qt-action@v4
         with:
-          python-version: "3.12"
-      - name: Install Qt build dependencies
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Configure (mock HAL, tests enabled)
+        shell: pwsh
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libopengl-dev libglx-dev libgl1-mesa-dev libglib2.0-dev
-      - name: Install Qt 6.8.3 (gcc_64)
+          cmake -S . -B build-tests -A x64 -DDTB_HAL=mock -DBUILD_TESTING=ON `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+      - name: Build tests and mock application
+        run: cmake --build build-tests --config Release --parallel 2
+      - name: Run core, HAL contract and UI tests
+        shell: pwsh
         run: |
-          pip install aqtinstall
-          aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O "$HOME/Qt"
-      - name: Configure + build (mock)
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/gcc_64" -DDTB_HAL=mock
-          cmake --build build
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+          $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH"
+          $env:QT_PLUGIN_PATH = "$env:QT_ROOT_DIR\plugins"
+          ctest --test-dir build-tests -C Release --output-on-failure --timeout 120
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-logs
+          path: build-tests/Testing/Temporary/*.log
+          if-no-files-found: ignore
+          retention-days: 14
 
   windows:
     name: windows build (portable + installer)
+    needs: tests
     runs-on: windows-latest
     permissions:
       contents: write # publish the release on tag builds
@@ -52,7 +65,7 @@ jobs:
       - name: Configure (win HAL)
         shell: pwsh
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDTB_HAL=win `
+          cmake -S . -B build -A x64 -DDTB_HAL=win -DBUILD_TESTING=OFF `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
       - name: Build
         run: cmake --build build --config Release
@@ -108,7 +121,14 @@ jobs:
           choco install innosetup -y --no-progress
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "ISCC not found" }
-          $ver = "${{ github.ref_name }}" -replace '^v', ''
+          $appInfo = Get-Content "src/core/AppInfo.h" -Raw
+          if ($appInfo -notmatch 'kVersion\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+            throw "Unable to read application version"
+          }
+          $ver = $Matches[1]
+          if ($env:GITHUB_REF -like 'refs/tags/*' -and $env:GITHUB_REF_NAME -ne "v$ver") {
+            throw "Release tag does not match application version $ver"
+          }
           # ISCC resolves relative /D paths against the .iss location (res/):
           # pass absolute stage/dist paths from the workspace root.
           $stageAbs = Join-Path (Get-Location).Path "stage\dell-toolbox"
@@ -121,7 +141,7 @@ jobs:
         run: |
           # The runner session is elevated, so the requireAdministrator build
           # must launch directly. This is the exact exe we ship.
-          $exe = Join-Path $env:exe_dir "dell-toolbox.exe"
+          $exe = Join-Path (Get-Location).Path "stage\dell-toolbox\dell-toolbox.exe"
           if (-not (Test-Path $exe)) { throw "smoke exe not found: $exe" }
           $p = Start-Process -FilePath $exe -ArgumentList "--version" -PassThru -Wait
           "smoke exit: $($p.ExitCode)"
@@ -155,5 +175,5 @@ jobs:
           path: |
             dell-toolbox-windows-x64.zip
             dist/DellToolbox-*-setup.exe
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14

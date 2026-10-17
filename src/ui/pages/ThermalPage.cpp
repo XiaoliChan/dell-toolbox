@@ -22,9 +22,6 @@
 
 #include "core/FanCurve.h"
 
-#ifdef Q_OS_WIN
-#include "hal/win/AwccConflict.h"
-#endif
 
 namespace dtb::ui {
 namespace {
@@ -109,12 +106,13 @@ void ThermalPage::refreshCustomPlans() {
         m_customPlanCombo->clear();
         for (const auto& plan : plans)
             m_customPlanCombo->addItem(plan.name, plan.guid);
+        m_customPlanCombo->setCurrentIndex(-1);
     });
     connect(list, &QProcess::errorOccurred, this, [list](QProcess::ProcessError e) {
         if (e == QProcess::FailedToStart)
             list->deleteLater();
     });
-    list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
+    list->start(m_controller->powerCfgProgram(), {QStringLiteral("/list")});
 }
 
 void ThermalPage::onModeAdopted(ThermalMode mode, bool external) {
@@ -161,6 +159,8 @@ void ThermalPage::addProfile(QButtonGroup* group, QVBoxLayout* layout, ThermalMo
         cap->setObjectName(QStringLiteral("statCaption"));
         m_customPlanCombo = new QComboBox(planRow);
         m_customPlanCombo->setMinimumWidth(220);
+        m_customPlanCombo->setEnabled(!m_controller->passive());
+        m_customPlanCombo->setPlaceholderText(tr("Choose a Windows plan"));
         pl->addWidget(cap);
         pl->addWidget(m_customPlanCombo);
         pl->addStretch(1);
@@ -168,9 +168,8 @@ void ThermalPage::addProfile(QButtonGroup* group, QVBoxLayout* layout, ThermalMo
         // The combo only acts on USER changes (blockSignals during refresh).
         connect(m_customPlanCombo, &QComboBox::activated, this, [this](int index) {
             const QString guid = m_customPlanCombo->itemData(index).toString();
-            if (!guid.isEmpty())
-                QProcess::startDetached(QStringLiteral("powercfg"),
-                                        {QStringLiteral("/setactive"), guid});
+            if (!guid.isEmpty() && !m_controller->passive())
+                m_controller->setActivePlan(guid, [](bool) {});
         });
         refreshCustomPlans();
     }
@@ -181,8 +180,8 @@ QWidget* ThermalPage::buildModeCard() {
     auto* layout = box->bodyLayout();
     layout->setSpacing(4);
     auto* modeSubtitle = new QLabel(
-        tr("Profiles are executed by the BIOS: one selection adjusts both the fan curves and the "
-           "power behaviour, exactly like the same four profiles inside Alienware Command Center."),
+        tr("Factory profiles use BIOS tuning. Custom selects manual fan mode, then this app "
+           "controls the fans using your curves and minimum speeds. Hardware support varies."),
         this);
     modeSubtitle->setObjectName(QStringLiteral("cardCaption"));
     wrapLabel(modeSubtitle);
@@ -212,8 +211,8 @@ QWidget* ThermalPage::buildModeCard() {
                tr("Maximum fan speed and unlocked power state - the same toggle as AWCC's G logo. Windows "
                   "plan: High performance."));
     addProfile(m_modeGroup, layout, ThermalMode::Custom, tr("Custom (fan curves)"),
-               tr("Your own per-fan temperature curves take over the fans - and you pick the Windows plan "
-                  "yourself below."));
+               tr("Selects manual fan firmware mode, then applies your per-fan curves/minimum speeds. "
+                  "Pick the Windows plan yourself below; verify fan response on your machine."));
     return box;
 }
 
@@ -426,13 +425,15 @@ QWidget* ThermalPage::buildSceneCard() {
         unit->setProperty("wasMin", false);
         hl->addWidget(spin, 1);
         hl->addWidget(unit);
-        connect(unit, &QComboBox::currentIndexChanged, rowW, [spin, unit](int index) {
+        connect(unit, &QComboBox::currentIndexChanged, rowW, [this, spin, unit](int index) {
+            const QSignalBlocker block(spin);
             const bool wasMin = unit->property("wasMin").toBool();
             const bool toMin = index == 1;
             int sec = spin->value() * (wasMin ? 60 : 1);
             spin->setRange(1, toMin ? 10 : 600);
             spin->setValue(toMin ? qBound(1, int(std::lround(sec / 60.0)), 10) : qBound(1, sec, 600));
             unit->setProperty("wasMin", toMin);
+            onSceneParamsChanged();
         });
         hl->addStretch(1);
         *spinOut = spin;
@@ -537,6 +538,7 @@ void ThermalPage::onConfigReloaded() {
             if (label.first == entry.first)
                 label.second->setText(v > 0 ? tr("%1%").arg(v) : tr("Auto"));
     }
+    onModeAdopted(m_config->loadMode(), false);
     onCurveModeChanged(m_curveMode ? m_curveMode->currentIndex() : 0);
     // Scene card: pull the reloaded (possibly reset) params back into the
     // controls. Signals are blocked because the setters would otherwise fire
@@ -547,15 +549,24 @@ void ThermalPage::onConfigReloaded() {
         box->setValue(v);
         box->blockSignals(false);
     };
+    {
+        const QSignalBlocker block(m_sceneEnabled);
+        m_sceneEnabled->setChecked(sp.enabled);
+        m_sceneBody->setVisible(sp.enabled);
+    }
     resyncSpin(m_gpuEnter, sp.gpuEnterThreshold);
     resyncSpin(m_gpuExit, sp.gpuExitThreshold);
     m_enterUnit->blockSignals(true);
     m_enterUnit->setCurrentIndex(0); // back to seconds
     m_enterUnit->blockSignals(false);
+    m_enterUnit->setProperty("wasMin", false);
+    { const QSignalBlocker block(m_enterDebounce); m_enterDebounce->setRange(1, 600); }
     resyncSpin(m_enterDebounce, sp.enterDebounceS);
     m_exitUnit->blockSignals(true);
     m_exitUnit->setCurrentIndex(0);
     m_exitUnit->blockSignals(false);
+    m_exitUnit->setProperty("wasMin", false);
+    { const QSignalBlocker block(m_exitDebounce); m_exitDebounce->setRange(1, 600); }
     resyncSpin(m_exitDebounce, sp.exitDebounceS);
     m_processes->blockSignals(true);
     m_processes->setPlainText(sp.gameProcesses.join(QLatin1Char('\n')));
@@ -563,18 +574,16 @@ void ThermalPage::onConfigReloaded() {
 }
 
 void ThermalPage::onSceneReset() {
-    const SceneParams defaults;
-    m_gpuEnter->setValue(defaults.gpuEnterThreshold);
-    m_gpuExit->setValue(defaults.gpuExitThreshold);
-    m_enterUnit->setCurrentIndex(0); // back to seconds
-    m_exitUnit->setCurrentIndex(0);
-    m_enterDebounce->setValue(defaults.enterDebounceS);
-    m_exitDebounce->setValue(defaults.exitDebounceS);
-    m_processes->setPlainText(defaults.gameProcesses.join(QLatin1Char('\n')));
+    SceneParams defaults;
+    defaults.enabled = m_sceneEnabled->isChecked();
+    m_config->saveSceneParams(defaults);
+    m_controller->scene()->setParams(defaults);
+    onConfigReloaded();
 }
 
 void ThermalPage::onSnapshot(const SystemSnapshot& s) {
     Q_UNUSED(s);
+    if (m_customPlanCombo) m_customPlanCombo->setEnabled(!m_controller->passive());
     // Surface mode-write failures (e.g. G-Mode on unsupported machines) and
     // the automatic G-Mode -> Performance fallback.
     const auto failed = m_controller->failedMode();

@@ -37,6 +37,11 @@ void Logger::init(const QString& filePath, Level minLevel, qint64 rotateBytes) {
     g_file.setFileName(filePath);
 }
 
+void Logger::setLevel(Level minLevel) {
+    const QMutexLocker lock(&g_mutex);
+    g_minLevel = minLevel;
+}
+
 void Logger::shutdown() {
     const QMutexLocker lock(&g_mutex);
     g_file.close();

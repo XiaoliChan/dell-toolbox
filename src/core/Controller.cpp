@@ -25,6 +25,32 @@ const QLatin1String kBalancedPlanName("Balanced");
 // or two; ignore adoptions inside this window so a slow read does not revert
 // the mode we just applied.
 constexpr qint64 kModeAdoptGraceMs = 5000;
+
+// Bounded, single-completion subprocess. FailedToStart does not emit finished;
+// a hung powercfg must not pin the chain gate for the rest of the session.
+void runPowerCfg(QObject* owner, const QString& program, const QStringList& args,
+                 std::function<void(bool, const QByteArray&)> done) {
+    auto* proc = new QProcess(owner);
+    auto* timeout = new QTimer(proc);
+    timeout->setSingleShot(true);
+    QObject::connect(timeout, &QTimer::timeout, proc, [proc] { proc->kill(); });
+    QObject::connect(proc, &QProcess::errorOccurred, owner, [proc, done](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            proc->deleteLater();
+            done(false, {});
+        }
+    });
+    QObject::connect(proc, &QProcess::finished, owner, [proc, timeout, done] {
+        timeout->stop();
+        const bool ok = proc->exitStatus() == QProcess::NormalExit && proc->exitCode() == 0;
+        const auto output = proc->readAllStandardOutput();
+        proc->deleteLater();
+        done(ok, output);
+    });
+    proc->start(program, args);
+    timeout->start(10000);
+}
+
 } // namespace
 
 Controller::Controller(HalSet hal, ConfigStore* cfg, QObject* parent)
@@ -33,6 +59,7 @@ Controller::Controller(HalSet hal, ConfigStore* cfg, QObject* parent)
     if (m_cfg) {
         m_baseline.setMode(m_cfg->loadMode());
         m_manual.expiresSec = m_cfg->loadManualExpireMin() * 60;
+        m_planSyncEnabled = m_cfg->loadPowerPlanSync();
     }
     if (m_hal.thermal) {
         for (const HalFanInfo& fi : m_hal.thermal->enumerateFans()) {
@@ -55,7 +82,18 @@ Controller::Controller(HalSet hal, ConfigStore* cfg, QObject* parent)
     connect(&m_timer, &QTimer::timeout, this, &Controller::tickOnce);
 }
 
-Controller::~Controller() { stop(); }
+Controller::~Controller() {
+    stop();
+    // Disconnect before member teardown: a killed subprocess can emit finished
+    // synchronously and must not start a replacement chain during destruction.
+    for (auto* proc : findChildren<QProcess*>(QString(), Qt::FindDirectChildrenOnly)) {
+        disconnect(proc, nullptr, this, nullptr);
+        if (proc->state() != QProcess::NotRunning) {
+            proc->kill();
+            proc->waitForFinished(1000);
+        }
+    }
+}
 
 void Controller::start(int periodMs) {
     m_timer.start(periodMs);
@@ -80,7 +118,17 @@ void Controller::reloadFromConfig() {
     }
     m_scene.setParams(m_cfg->loadSceneParams());
     m_dynamic.setProfile(m_cfg->loadDynamicProfile());
+    ++m_planGeneration;
+    m_planQueuedRequest = false;
     m_planSyncEnabled = m_cfg->loadPowerPlanSync();
+    if (m_hal.thermal)
+        m_hal.thermal->cancelPendingModeWrite();
+    m_manual.clear();
+    m_manualProfileName.clear();
+    m_failedMode.reset();
+    m_adoptStreak = 0;
+    m_lastFanPercent.clear();
+    m_lastFanWriteMs = 0;
     m_lastModeWritten.reset(); // force re-apply of the reloaded mode
     m_pendingModeWrite = true;
     m_pendingWriteAttempts = 0;
@@ -88,8 +136,19 @@ void Controller::reloadFromConfig() {
 }
 
 void Controller::setPassive(bool on) {
+    if (m_passive == on)
+        return;
     m_passive = on;
+    ++m_planGeneration;
+    m_planQueuedRequest = false;
+    m_adoptStreak = 0;
+    m_lastModeWritten.reset();
+    m_lastFanPercent.clear();
+    m_lastFanWriteMs = 0;
+    m_failedMode.reset();
     if (on) {
+        if (m_hal.thermal)
+            m_hal.thermal->cancelPendingModeWrite();
         m_pendingModeWrite = false; // monitor mode sends nothing; nothing can be in flight
         m_planActiveName.clear(); // the policy chip falls back to "AWCC (monitor)"
     }
@@ -124,20 +183,21 @@ void Controller::adoptExternalProfile() {
     // nothing of ours, so there is nothing to protect there - adoption must
     // keep following AWCC even after the user clicked a tray/radio mode.
     if (!m_passive) {
-        if (m_pendingModeWrite)
+        if (m_pendingModeWrite || m_hal.thermal->hasPendingModeWrite())
             return;
         if (m_lastModeWriteMs != 0 && m_snapshot.tsMs - m_lastModeWriteMs < kModeAdoptGraceMs)
             return; // readback may lag our own recent write
     }
     const auto current = m_hal.thermal->readCurrentProfile();
-    if (!current || *current == m_baseline.mode()) {
+    if (!current || *current == m_baseline.mode()
+        || (!m_passive && current == m_lastModeWritten)) {
         m_adoptStreak = 0;
         return;
     }
-    // Custom owns everything (fans + plan); the firmware always reports a
-    // table code that is never "Custom", so adopting would instantly yank
-    // the user out of Custom.
-    if (m_baseline.mode() == ThermalMode::Custom) {
+    // While actively owning Custom fan control, transient firmware table
+    // readback must not discard the user's curve configuration. Monitor mode
+    // does not own it and must follow external changes normally.
+    if (!m_passive && m_baseline.mode() == ThermalMode::Custom) {
         m_adoptStreak = 0;
         return;
     }
@@ -157,6 +217,7 @@ void Controller::adoptExternalProfile() {
     m_baseline.setMode(*current);
     if (m_cfg)
         m_cfg->saveMode(*current);
+    m_lastFanPercent.clear();
     m_lastModeWritten = *current; // do not write it straight back
     m_failedMode.reset();
     dtbLog(info) << "thermal profile changed externally -> adopted" << int(*current);
@@ -211,51 +272,60 @@ void Controller::tickOnce() {
     }
 }
 
-// Thermal profile -> Windows power plan mapping (the published usage table):
-//   G-Mode / Ultra Performance -> High Performance
-//   Optimized / Quiet / Cool / Custom -> Balanced
-// Plans are resolved from powercfg /list by template GUID or localized name
-// (instance GUIDs are machine-specific), all calls asynchronous. A request
-// arriving while a chain is in flight is REMEMBERED and re-applied when the
-// chain completes - previously it was dropped, so a quick G-Mode ->
-// Balanced -> G-Mode sequence left the plan stuck on Balanced.
-void Controller::handlePlanSync(ThermalMode mode) {
-    if (!m_planSyncEnabled)
+// Every asynchronous stage is tied to a generation. A newer mode, disabling
+// sync, or entering monitor mode invalidates all not-yet-issued mutations.
+void Controller::setPowerPlanSyncEnabled(bool on) {
+    if (m_planSyncEnabled == on)
         return;
+    m_planSyncEnabled = on;
+    ++m_planGeneration;
+    m_planQueuedRequest = false;
+    if (on && !m_passive)
+        handlePlanSync(m_lastModeWritten.value_or(m_baseline.mode()));
+}
+
+void Controller::handlePlanSync(ThermalMode mode) {
+    ++m_planGeneration;
     m_planWanted = mode;
-    m_planCreateTried = false;
-    m_planReportOnly = mode == ThermalMode::Custom; // the user picks the plan
-    if (m_planBusy) {
-        m_planQueuedRequest = true;
+    if (!m_planSyncEnabled || m_passive) {
+        m_planQueuedRequest = false;
         return;
     }
-    beginPlanChain();
+    m_planQueuedRequest = true;
+    if (!m_planBusy)
+        beginPlanChain();
 }
 
 void Controller::beginPlanChain() {
+    if (!m_planSyncEnabled || m_passive) {
+        m_planQueuedRequest = false;
+        return;
+    }
+    m_planQueuedRequest = false;
     m_planBusy = true;
+    const auto generation = m_planGeneration;
+    const bool reportOnly = m_planWanted == ThermalMode::Custom;
     const bool wantsHigh = m_planWanted == ThermalMode::GMode || m_planWanted == ThermalMode::Performance;
-    m_planAppliedHigh = wantsHigh;
-    auto* list = new QProcess(this);
-    // A failed start never emits finished(); release the gate or plan sync
-    // stays dead for the rest of the session.
-    connect(list, &QProcess::errorOccurred, this, [this, list](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart) {
-            list->deleteLater();
+    runPowerCfg(this, m_powerCfgProgram, {QStringLiteral("/list")}, [this, generation, reportOnly, wantsHigh](bool ok, const QByteArray& output) {
+        if (generation != m_planGeneration || !ok) {
             finishPlanChain();
+            return;
         }
-    });
-    connect(list, &QProcess::finished, this, [this, list, wantsHigh] {
-        list->deleteLater();
-        // readAllStandardOutput() DRAINS the buffer: parse once, reuse
-        // everywhere (a second read returns empty - that is how the plan
-        // name lookup produced a bogus "Custom").
-        const auto plans = parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()));
+        const auto plans = parsePowerPlans(QString::fromLocal8Bit(output));
+        if (reportOnly) {
+            queryActivePlan([this, generation, plans](const QString& active) {
+                if (generation == m_planGeneration) {
+                    for (const auto& plan : plans)
+                        if (plan.guid.compare(active, Qt::CaseInsensitive) == 0)
+                            m_planActiveName = plan.name;
+                }
+                finishPlanChain();
+            });
+            return;
+        }
         QString target;
         QString targetName;
-        for (const PowerPlanEntry& plan : plans) {
-            // powercfg's GUID casing is not guaranteed: match the well-known
-            // template GUIDs case-insensitively or the fallback silently dies.
+        for (const auto& plan : plans) {
             const bool high = plan.guid.compare(kHighPerfPlanGuid, Qt::CaseInsensitive) == 0
                               || plan.name.contains(QLatin1String("high"), Qt::CaseInsensitive)
                               || plan.name.contains(QString::fromUtf8("高性能"));
@@ -264,186 +334,107 @@ void Controller::beginPlanChain() {
                                   || plan.name.contains(QString::fromUtf8("平衡"));
             if (wantsHigh ? high : balanced) {
                 target = plan.guid;
-                targetName = plan.name; // travels with the guid: a second pass cannot drift
+                targetName = plan.name;
             }
         }
-        if (target.isEmpty()) {
-            // High Performance can be missing (Dell uninstallers wipe it;
-            // powercfg enumeration was also flaky right after). Recreate it
-            // from the stock template once, then retry the chain.
-            if (wantsHigh && !m_planCreateTried) {
-                m_planCreateTried = true;
-                if (!m_mintedHighGuid.isEmpty()) {
-                    // /list enumeration can lag the create (see below):
-                    // re-activate the copy minted earlier instead of
-                    // duplicating the template again - every retry would mint
-                    // one more permanent "High performance" plan in the OS.
-                    setActivePlan(m_mintedHighGuid, [this](bool ok) {
-                        if (!ok)
-                            m_mintedHighGuid.clear(); // deleted meanwhile: allow a fresh mint
-                        finishPlanChain();
-                    });
-                    return;
-                }
-                dtbLog(info) << "plan sync: High Performance missing - recreating from template";
-                auto* dup = new QProcess(this);
-                connect(dup, &QProcess::finished, this, [this, dup] {
-                    dup->deleteLater();
-                    // Activate the minted GUID straight from the command
-                    // output: the fresh plan may not enumerate in /list for a
-                    // while on this machine (re-listing found nothing last
-                    // time). Output: "Power Scheme GUID: <guid> (name)".
-                    const auto m = kGuidOnlyRe.match(
-                        QString::fromLocal8Bit(dup->readAllStandardOutput()));
-                    if (!m.hasMatch()) {
-                        dtbLog(warn) << "plan sync: duplicatescheme gave no GUID (exit"
-                                     << dup->exitCode() << ")";
-                        finishPlanChain();
-                        return;
-                    }
-                    m_mintedHighGuid = m.captured(1); // remember it: never mint twice
-                    setActivePlan(m_mintedHighGuid, [this](bool ok) {
-                        if (ok) // a failed switch must not rename the chip
-                            m_planActiveName = kHighPerfPlanName;
-                        finishPlanChain();
-                    });
-                });
-                // FailedToStart never emits finished(); every other error is
-                // followed by finished(), so filtering keeps finishPlanChain
-                // single-shot (a second release would open the busy gate while
-                // a replacement chain started by the first release runs).
-                connect(dup, &QProcess::errorOccurred, this, [this, dup](QProcess::ProcessError error) {
-                    if (error == QProcess::FailedToStart) {
-                        dup->deleteLater();
-                        finishPlanChain();
-                    }
-                });
-                dup->start(QStringLiteral("powercfg"),
-                           {QStringLiteral("-duplicatescheme"), kHighPerfPlanGuid});
-                return;
-            }
-            dtbLog(info) << "plan sync: no matching plan (wantsHigh" << wantsHigh << ")";
-            finishPlanChain();
-            return;
-        }
-        queryActivePlan([this, target, targetName, wantsHigh](const QString& active) {
-            if (m_planReportOnly) {
-                // Custom: no mapping - just name the currently active plan
-                // for the Dashboard chip (the user may have set any plan).
-                m_planActiveName = QString::compare(active, target, Qt::CaseInsensitive) == 0
-                                       ? (targetName.isEmpty() ? QStringLiteral("-") : targetName)
-                                       : QStringLiteral("-");
+        auto activate = [this, generation](const QString& guid, const QString& name) {
+            if (generation != m_planGeneration) {
                 finishPlanChain();
                 return;
             }
-            // targetName is always found here (target came from this same
-            // list); the stock-name fallback guards future lookup changes.
-            const QString planName = targetName.isEmpty()
-                                         ? QString(wantsHigh ? kHighPerfPlanName : kBalancedPlanName)
-                                         : targetName;
-            if (QString::compare(active, target, Qt::CaseInsensitive) == 0) {
-                m_planActiveName = planName; // wanted plan is already active
-                finishPlanChain();
-                return;
-            }
-            setActivePlan(target, [this, planName](bool ok) {
-                if (ok)
-                    m_planActiveName = planName;
+            applyActivePlan(guid, [this, generation, name](bool success) {
+                if (success && generation == m_planGeneration)
+                    m_planActiveName = name;
                 finishPlanChain();
             });
+        };
+        if (target.isEmpty()) {
+            if (!wantsHigh) {
+                finishPlanChain();
+                return;
+            }
+            if (!m_mintedHighGuid.isEmpty()) {
+                activate(m_mintedHighGuid, kHighPerfPlanName);
+                return;
+            }
+            // The generation was checked above; no disabled/passive request
+            // can create a persistent OS scheme through this continuation.
+            runPowerCfg(this, m_powerCfgProgram, {QStringLiteral("-duplicatescheme"), kHighPerfPlanGuid},
+                        [this, generation, activate](bool success, const QByteArray& output) {
+                const auto match = kGuidOnlyRe.match(QString::fromLocal8Bit(output));
+                if (success && match.hasMatch())
+                    m_mintedHighGuid = match.captured(1);
+                if (!success || !match.hasMatch() || generation != m_planGeneration) {
+                    finishPlanChain();
+                    return;
+                }
+                activate(m_mintedHighGuid, kHighPerfPlanName);
+            });
+            return;
+        }
+        queryActivePlan([this, generation, target, targetName, activate](const QString& active) {
+            if (generation != m_planGeneration) {
+                finishPlanChain();
+                return;
+            }
+            if (active.compare(target, Qt::CaseInsensitive) == 0) {
+                m_planActiveName = targetName;
+                finishPlanChain();
+            } else {
+                activate(target, targetName);
+            }
         });
     });
-    list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
 }
 
 void Controller::finishPlanChain() {
     m_planBusy = false;
-    // Honor a newer request that arrived while this chain was in flight.
-    if (m_planSyncEnabled) {
-        const bool wantsHigh = m_planWanted == ThermalMode::GMode || m_planWanted == ThermalMode::Performance;
-        if (wantsHigh != m_planAppliedHigh)
-            beginPlanChain();
-    }
+    if (m_planQueuedRequest && m_planSyncEnabled && !m_passive)
+        beginPlanChain();
 }
 
-// Name-only refresh: /list + /getactivescheme -> m_planActiveName. Never
-// switches anything; a queued real request runs right after.
 void Controller::refreshActivePlanName() {
-    if (m_planBusy || !m_planSyncEnabled)
+    if (m_planBusy || m_passive)
         return;
     m_planBusy = true;
-    auto* list = new QProcess(this);
-    connect(list, &QProcess::errorOccurred, this, [this, list](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart) {
-            list->deleteLater();
-            m_planBusy = false;
+    const auto generation = m_planGeneration;
+    runPowerCfg(this, m_powerCfgProgram, {QStringLiteral("/list")}, [this, generation](bool ok, const QByteArray& output) {
+        if (!ok || generation != m_planGeneration) {
+            finishPlanChain();
+            return;
         }
-    });
-    connect(list, &QProcess::finished, this, [this, list] {
-        list->deleteLater();
-        const auto plans = parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()));
-        auto* act = new QProcess(this);
-        connect(act, &QProcess::finished, this, [this, act, plans] {
-            act->deleteLater();
-            const auto activePlans = parsePowerPlans(QString::fromLocal8Bit(act->readAllStandardOutput()));
-            const QString guid = activePlans.isEmpty() ? QString() : activePlans.first().guid;
-            for (const auto& plan : plans)
-                if (QString::compare(plan.guid, guid, Qt::CaseInsensitive) == 0)
-                    m_planActiveName = plan.name;
-            m_planBusy = false;
-            if (m_planQueuedRequest) {
-                m_planQueuedRequest = false;
-                beginPlanChain();
+        const auto plans = parsePowerPlans(QString::fromLocal8Bit(output));
+        queryActivePlan([this, generation, plans](const QString& active) {
+            if (generation == m_planGeneration) {
+                for (const auto& plan : plans)
+                    if (plan.guid.compare(active, Qt::CaseInsensitive) == 0)
+                        m_planActiveName = plan.name;
             }
+            finishPlanChain();
         });
-        connect(act, &QProcess::errorOccurred, this, [this, act](QProcess::ProcessError e) {
-            if (e == QProcess::FailedToStart) {
-                act->deleteLater();
-                m_planBusy = false;
-            }
-        });
-        act->start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
     });
-    list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
 }
 
 void Controller::queryActivePlan(const std::function<void(const QString&)>& done) {
-    auto* proc = new QProcess(this);
-    connect(proc, &QProcess::errorOccurred, this, [this, proc, done](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart) {
-            proc->deleteLater();
-            done(QString()); // active plan unknown; caller proceeds without it
-        }
+    runPowerCfg(this, m_powerCfgProgram, {QStringLiteral("/getactivescheme")}, [done](bool ok, const QByteArray& output) {
+        const auto plans = parsePowerPlans(QString::fromLocal8Bit(output));
+        done(ok && !plans.isEmpty() ? plans.first().guid : QString());
     });
-    connect(proc, &QProcess::finished, this, [this, proc, done] {
-        proc->deleteLater();
-        const auto plans = parsePowerPlans(QString::fromLocal8Bit(proc->readAllStandardOutput()));
-        done(plans.isEmpty() ? QString() : plans.first().guid);
-    });
-    proc->start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
 }
 
 void Controller::setActivePlan(const QString& guid, const std::function<void(bool)>& done) {
-    if (m_passive) { // monitor mode performs no writes, not even queued ones
-        dtbLog(info) << "plan sync: passive - skipping /setactive";
+    // An explicit user selection supersedes any outstanding automatic mapping.
+    ++m_planGeneration;
+    m_planQueuedRequest = false;
+    applyActivePlan(guid, done);
+}
+
+void Controller::applyActivePlan(const QString& guid, const std::function<void(bool)>& done) {
+    if (m_passive || guid.isEmpty()) {
         done(false);
         return;
     }
-    auto* proc = new QProcess(this);
-    connect(proc, &QProcess::errorOccurred, this, [this, proc, done](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart) {
-            proc->deleteLater();
-            done(false); // nothing was switched; still release the busy gate
-        }
-    });
-    connect(proc, &QProcess::finished, this, [this, proc, done] {
-        proc->deleteLater();
-        const bool ok = proc->exitCode() == 0;
-        if (!ok)
-            dtbLog(warn) << "plan sync: powercfg /setactive failed (exit" << proc->exitCode() << ")";
-        done(ok);
-    });
-    proc->start(QStringLiteral("powercfg"), {QStringLiteral("/setactive"), guid});
+    runPowerCfg(this, m_powerCfgProgram, {QStringLiteral("/setactive"), guid}, [done](bool ok, const QByteArray&) { done(ok); });
 }
 
 void Controller::apply(const ControlTargets& t) {
@@ -458,34 +449,35 @@ void Controller::apply(const ControlTargets& t) {
         if (boost > it.value())
             it.value() = boost;
     }
-    // Mode changes are rare and safe: always written immediately. Custom is
-    // the exception: an APP-side concept (user-owned fans + plan), not a
-    // firmware table - writing 0x00 made the firmware fall back and the
-    // adoption loop yanked the UI back to Balanced.
-    if (targets.mode && *targets.mode == ThermalMode::Custom) {
-        if (m_lastModeWritten != ThermalMode::Custom) {
-            m_lastModeWritten = ThermalMode::Custom;
-            emit thermalModeChanged(ThermalMode::Custom, false);
-        }
-    } else if (targets.mode && targets.mode != m_lastModeWritten) {
+    // Continue firmware verification only after resolving this tick's scene /
+    // manual target. A superseded Performance request must not write another
+    // candidate before a new mode takes ownership.
+    if (targets.mode == ThermalMode::Performance && targets.mode == m_lastModeWritten)
+        m_hal.thermal->pollPendingModeWrite();
+    // Custom is the firmware's manual fan mode: enter it successfully before
+    // any fan write, otherwise BIOS/G-Mode can override every curve target.
+    if (targets.mode && targets.mode != m_lastModeWritten) {
+        m_hal.thermal->cancelPendingModeWrite();
         if (m_hal.thermal->setMode(*targets.mode)) {
+            m_lastFanPercent.clear();
+            m_lastFanWriteMs = 0;
             m_lastModeWritten = targets.mode;
-            m_pendingModeWrite = false; // the queued user write has landed
+            m_pendingModeWrite = false;
             m_pendingWriteAttempts = 0;
             m_lastModeWriteMs = m_snapshot.tsMs;
             m_failedMode.reset();
-            handlePlanSync(*targets.mode); // AWCC-aligned: G-Mode -> High Performance plan
-            emit thermalModeChanged(*targets.mode, false); // UI + tray re-sync
+            handlePlanSync(*targets.mode);
+            emit thermalModeChanged(*targets.mode, false);
         } else {
-            m_failedMode = targets.mode; // retried next tick; UI shows the banner
-            // Bound the retry so a permanently rejected mode (unsupported
-            // G-Mode, WMI gone) cannot block external adoption forever: after
-            // ~5 failed ticks give up and let the readback win (honest revert,
-            // the banner already tells the user the write failed).
+            m_failedMode = targets.mode;
             if (++m_pendingWriteAttempts >= 5)
                 m_pendingModeWrite = false;
+            return; // do not apply dependent fan/power targets in the wrong mode
         }
     }
+    // BIOS modes own fan curves, including scene overrides of a Custom baseline.
+    if (targets.mode && *targets.mode != ThermalMode::Custom)
+        targets.fanPercent.clear();
     // Fan percentages: dead zone plus a minimum interval between writes,
     // because rapid WMI fan writes can stutter the machine.
     if (!targets.fanPercent.isEmpty()) {
@@ -499,7 +491,7 @@ void Controller::apply(const ControlTargets& t) {
                 break;
             }
             const int last = m_lastFanPercent.value(it.key(), -1);
-            if (qAbs(it.value() - last) >= kFanDeadZonePercent) {
+            if (!m_lastFanPercent.contains(it.key()) || qAbs(it.value() - last) >= kFanDeadZonePercent) {
                 dirty = true;
                 break;
             }

@@ -16,6 +16,8 @@ public:
     static void write(Level level, const char* file, int line, const QString& message);
     static QString levelName(Level l);
     static void shutdown();
+    // Change filtering without reopening/truncating the current session log.
+    static void setLevel(Level minLevel);
 };
 
 // Usage: dtbLog(info) << "fan " << id << " -> " << pct;

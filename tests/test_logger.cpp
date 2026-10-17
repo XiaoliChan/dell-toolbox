@@ -39,6 +39,25 @@ private slots:
         QVERIFY(content.contains("kept"));
     }
 
+    void changesLevelWithoutTruncatingLog() {
+        const QString path = dir->filePath("live-level.log");
+        Logger::init(path, Logger::info);
+        dtbLog(info) << "before change";
+        Logger::setLevel(Logger::error);
+        dtbLog(info) << "filtered after change";
+        dtbLog(error) << "error retained";
+        Logger::setLevel(Logger::debug);
+        dtbLog(debug) << "debug retained";
+        Logger::shutdown();
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        const auto content = f.readAll();
+        QVERIFY(content.contains("before change"));
+        QVERIFY(!content.contains("filtered after change"));
+        QVERIFY(content.contains("error retained"));
+        QVERIFY(content.contains("debug retained"));
+    }
+
     void truncatesWhenTooBig() {
         // One file, always: overflow resets in place, never a .1 backup.
         const QString path = dir->filePath("rotating.log");

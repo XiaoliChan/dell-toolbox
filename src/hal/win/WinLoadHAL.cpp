@@ -10,27 +10,12 @@ namespace dtb::win {
 namespace {
 Q_LOGGING_CATEGORY(lcLoad, "dtb.load")
 
-QString pdhCounterPath() {
-    // Resolve the localized names for "Processor" and "% Processor Time"
-    // (perf indices 238 and 6); fall back to the English literals.
-    wchar_t processor[128] = L"Processor";
-    wchar_t percentTime[128] = L"% Processor Time";
-    wchar_t buffer[128] = {};
-    DWORD size = sizeof(buffer);
-    if (PdhLookupPerfNameByIndexW(nullptr, 238, buffer, &size) == ERROR_SUCCESS && buffer[0])
-        wcscpy_s(processor, buffer);
-    size = sizeof(buffer);
-    if (PdhLookupPerfNameByIndexW(nullptr, 6, buffer, &size) == ERROR_SUCCESS && buffer[0])
-        wcscpy_s(percentTime, buffer);
-    return QString("\\%1(_Total)\\%2").arg(QString::fromWCharArray(processor),
-                                           QString::fromWCharArray(percentTime));
-}
 } // namespace
 
 WinLoadHAL::WinLoadHAL() {
     if (PdhOpenQueryW(nullptr, 0, static_cast<PDH_HQUERY*>(&m_query)) != ERROR_SUCCESS)
         return;
-    const QString path = pdhCounterPath();
+    const QString path = QStringLiteral("\\Processor(_Total)\\% Processor Time");
     if (PdhAddEnglishCounterW(static_cast<PDH_HQUERY>(m_query),
                               reinterpret_cast<LPCWSTR>(path.utf16()), 0,
                               static_cast<PDH_HCOUNTER*>(&m_counter))
@@ -49,14 +34,16 @@ WinLoadHAL::~WinLoadHAL() {
 
 int WinLoadHAL::cpuLoadPercent() {
     if (!m_ready)
-        return 0;
+        return -1;
     if (PdhCollectQueryData(static_cast<PDH_HQUERY>(m_query)) != ERROR_SUCCESS)
-        return 0;
+        return -1;
     PDH_FMT_COUNTERVALUE value = {};
     if (PdhGetFormattedCounterValue(static_cast<PDH_HCOUNTER>(m_counter), PDH_FMT_LONG, nullptr, &value)
         != ERROR_SUCCESS)
-        return 0;
-    return static_cast<int>(value.longValue);
+        return -1;
+    if (value.CStatus != PDH_CSTATUS_VALID_DATA && value.CStatus != PDH_CSTATUS_NEW_DATA)
+        return -1;
+    return qBound(0, static_cast<int>(value.longValue), 100);
 }
 
 QString WinLoadHAL::foregroundProcess() {

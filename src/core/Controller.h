@@ -31,6 +31,9 @@ public:
     ~Controller() override;
 
     // Injectable clock so tests can exercise the write throttling deterministically.
+    // Injectable subprocess path for isolated integration tests.
+    void setPowerCfgProgram(const QString& path) { m_powerCfgProgram = path; }
+    QString powerCfgProgram() const { return m_powerCfgProgram; }
     void setClock(std::function<qint64()> fn) { m_clock = std::move(fn); }
 
     void start(int periodMs = 1000);
@@ -69,7 +72,7 @@ public:
     // Thermal-profile -> power plan sync: G-Mode / Ultra Performance switch
     // Windows to the High Performance plan, every other profile to Balanced.
     // Applies only when enabled in Settings.
-    void setPowerPlanSyncEnabled(bool on) { m_planSyncEnabled = on; }
+    void setPowerPlanSyncEnabled(bool on);
     bool powerPlanSyncEnabled() const { return m_planSyncEnabled; }
     // Display name of the Windows plan the profile mapping applied last.
     QString activePlanName() const { return m_planActiveName; }
@@ -82,6 +85,10 @@ public:
     // Drop the cached last-written mode so the next tick re-applies it (mode UI).
     // Marks a user write as pending: external-profile adoption must not fight it.
     void forceNextModeWrite() {
+        ++m_planGeneration;
+        m_planQueuedRequest = false;
+        if (m_hal.thermal)
+            m_hal.thermal->cancelPendingModeWrite();
         m_lastModeWritten.reset();
         m_pendingModeWrite = true;
         m_pendingWriteAttempts = 0;
@@ -112,6 +119,7 @@ private:
     SystemSnapshot readSnapshot();
     void adoptExternalProfile();
     void apply(const ControlTargets& t);
+    void applyActivePlan(const QString& guid, const std::function<void(bool)>& done);
 
     HalSet m_hal; // not owned; the creator keeps the HAL objects alive
     ConfigStore* m_cfg; // not owned
@@ -141,15 +149,14 @@ private:
     QHash<FanId, int> m_fanBoost; // Easy mode: per-fan minimum speed
     QString m_chargingMode; // last known charging mode ("" until first read)
     QString m_manualProfileName; // active manual power profile (display)
+    QString m_powerCfgProgram = QStringLiteral("powercfg");
     bool m_planSyncEnabled = true;
     bool m_forceControl = false;
     bool m_planBusy = false; // a powercfg chain is in flight
     ThermalMode m_planWanted = ThermalMode::Balanced; // latest request
-    bool m_planAppliedHigh = false; // what the last completed chain applied
+    quint64 m_planGeneration = 0; // invalidates asynchronous requests on state changes
     QString m_planActiveName; // display name of the applied plan
     QString m_mintedHighGuid; // duplicatescheme copy minted this session (never mint twice)
-    bool m_planCreateTried = false; // one duplicatescheme retry per request
-    bool m_planReportOnly = false; // Custom: name refresh, never switch
     int m_planNameTick = 0; // periodic chip refresh
     bool m_planQueuedRequest = false; // a real request waited for a name refresh
     int m_chargePollTick = 0; // charge read every 3rd tick (WMI cost)

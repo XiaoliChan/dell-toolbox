@@ -69,6 +69,9 @@ void attachParentConsole() {
 }
 } // namespace
 
+#endif
+
+#ifdef DTB_HAL_WIN
 #include "hal/win/WinChargeHAL.h"
 #include "hal/win/WinThermalHAL.h"
 #include "hal/win/WmiConnection.h"
@@ -79,7 +82,7 @@ void attachParentConsole() {
 
 namespace {
 void printDoctor() {
-#ifdef Q_OS_WIN
+#ifdef DTB_HAL_WIN
     // One-shot hardware triage; builds its own backend set.
     auto halOwner = dtb::win::createHalSet();
     const auto pass = [](bool ok, const char* name, const QString& note = {}) {
@@ -207,7 +210,7 @@ int main(int argc, char* argv[]) {
         printDoctor();
         return 0;
     }
-#ifdef Q_OS_WIN
+#ifdef DTB_HAL_WIN
     // Diagnostic: observe/clear the EC game-shift latch. --gshift=2 reads;
     // --gshift=0 / --gshift=1 send one op then read back.
     for (const QString& a : args) {
@@ -236,7 +239,7 @@ int main(int argc, char* argv[]) {
                       args.contains("--verbose") ? dtb::Logger::debug : dtb::Logger::info);
     dtbLog(info) << dtb::app::kName << dtb::app::kVersion << "starting";
 
-#ifdef Q_OS_WIN
+#ifdef DTB_HAL_WIN
     auto halOwner = dtb::win::createHalSet();
     dtb::HalSet hal = halOwner.set;
 #else

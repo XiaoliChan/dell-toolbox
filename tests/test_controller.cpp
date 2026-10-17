@@ -1,4 +1,8 @@
 #include <QTemporaryFile>
+#include <QTemporaryDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <QtTest>
 
 #include "core/Controller.h"
@@ -24,8 +28,10 @@ struct Rig {
             hal.setScenario(scenario);
         set = hal.makeSet();
         cfg = std::make_unique<ConfigStore>(iniPath);
+        cfg->savePowerPlanSync(false); // Never mutate real Windows plans in HAL-mock tests.
         cfg->saveMode(mode); // Custom lets the baseline own the fan curves
         ctrl = std::make_unique<Controller>(set, cfg.get());
+        ctrl->setPowerCfgProgram(QString::fromUtf8(DTB_FAKE_POWERCFG_PATH));
         ctrl->setClock([this] { return fakeNow; });
     }
 
@@ -35,6 +41,35 @@ struct Rig {
             fakeNow += 1000;
             ctrl->tickOnce();
         }
+    }
+};
+
+// PATH-scoped fake powercfg exercises the real asynchronous QProcess chain.
+struct FakePowerCfg {
+    QTemporaryDir dir;
+    QByteArray oldPath = qgetenv("PATH");
+    FakePowerCfg() {
+        const QString source = QString::fromUtf8(DTB_FAKE_POWERCFG_PATH);
+        const QString destination = dir.filePath(QFileInfo(source).fileName());
+        if (!QFile::copy(source, destination))
+            qFatal("Unable to copy fake powercfg fixture");
+        QFile::setPermissions(destination, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        QFile gate(dir.filePath("gate"));
+        if (!gate.open(QIODevice::WriteOnly))
+            qFatal("Unable to create fake powercfg gate");
+        qputenv("PATH", dir.path().toLocal8Bit() + QDir::listSeparator().toLatin1() + oldPath);
+    }
+    QString program() const { return dir.filePath(QFileInfo(QString::fromUtf8(DTB_FAKE_POWERCFG_PATH)).fileName()); }
+    ~FakePowerCfg() { qputenv("PATH", oldPath); }
+    QByteArray trace() {
+        QFile f(dir.filePath("trace"));
+        if (!f.open(QIODevice::ReadOnly))
+            return {};
+        return f.readAll();
+    }
+    void release() {
+        QFile f(dir.filePath("release"));
+        f.open(QIODevice::WriteOnly);
     }
 };
 
@@ -65,8 +100,8 @@ private slots:
         });
         rig.tick(10);
         QCOMPARE(countWrites(rig.hal.writes, MockHal::Write::Kind::FanPercent), 2); // both fans, first tick only
-        // Custom is app-side: fans are written, the firmware table is NOT.
-        QVERIFY(!hasModeWrite(rig.hal.writes, ThermalMode::Custom));
+        // Enter the firmware manual table before sending fan targets.
+        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::Custom));
         QCOMPARE(rig.ctrl->activePolicy(), QStringLiteral("baseline")); // dynamic is out of the chain until PL writes land
     }
 
@@ -98,7 +133,7 @@ private slots:
         rig.ctrl->manual()->set(t, rig.fakeNow);
         rig.tick(1);
         QCOMPARE(rig.ctrl->activePolicy(), QStringLiteral("manual"));
-        QVERIFY(!hasModeWrite(rig.hal.writes, ThermalMode::Custom)); // app-side only
+        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::Custom));
         bool saw90 = false;
         for (const auto& e : rig.hal.writes)
             if (e.kind == MockHal::Write::Kind::FanPercent && e.fan == 0x33 && e.value == 90)
@@ -146,6 +181,144 @@ private slots:
         rig.hal.externalMode = ThermalMode::GMode;
         rig.tick(10);
         QCOMPARE(rig.ctrl->baseline()->mode(), ThermalMode::Custom);
+    }
+
+    void loadsPowerPlanSyncSetting() {
+        Rig rig;
+        rig.cfg->savePowerPlanSync(false);
+        Controller restored(rig.set, rig.cfg.get());
+        QVERIFY(!restored.powerPlanSyncEnabled());
+    }
+
+    void customMonitorFollowsFirmware() {
+        Rig rig;
+        rig.ctrl->setPassive(true);
+        rig.hal.externalMode = ThermalMode::GMode;
+        rig.tick(3);
+        QCOMPARE(rig.ctrl->baseline()->mode(), ThermalMode::GMode);
+        QVERIFY(rig.hal.writes.isEmpty());
+    }
+
+    void zeroPercentCurveIsWrittenInitially() {
+        Rig rig;
+        FanCurve zero;
+        zero.setPoints({{0, 0}, {100, 0}});
+        rig.ctrl->baseline()->setFanCurve(0x33, 0x01, zero);
+        rig.ctrl->baseline()->setFanCurve(0x32, 0x06, zero);
+        rig.hal.state.sensors = {{0x01, 40}, {0x06, 40}};
+        rig.tick();
+        QCOMPARE(countWrites(rig.hal.writes, MockHal::Write::Kind::FanPercent), 2);
+    }
+
+    void resumeControlRewritesFans() {
+        Rig rig;
+        rig.tick();
+        rig.hal.writes.clear();
+        rig.ctrl->setPassive(true);
+        rig.tick();
+        QVERIFY(rig.hal.writes.isEmpty());
+        rig.ctrl->setPassive(false);
+        rig.tick();
+        QCOMPARE(countWrites(rig.hal.writes, MockHal::Write::Kind::FanPercent), 2);
+    }
+
+    void modeFailureBlocksDependentFanWritesAndCustomClearsFailure() {
+        Rig rig;
+        rig.hal.thermalWritesSucceed = false;
+        rig.ctrl->forceNextModeWrite();
+        rig.tick();
+        QVERIFY(rig.ctrl->failedMode().has_value());
+        QCOMPARE(countWrites(rig.hal.writes, MockHal::Write::Kind::FanPercent), 0);
+        rig.hal.thermalWritesSucceed = true;
+        rig.tick();
+        QVERIFY(!rig.ctrl->failedMode());
+        QCOMPARE(countWrites(rig.hal.writes, MockHal::Write::Kind::FanPercent), 2);
+    }
+
+    void sceneDoesNotAdoptItsOwnModeOrWriteCustomFans() {
+        Rig rig(nullptr, ThermalMode::Balanced);
+        auto params = rig.ctrl->scene()->params();
+        params.enterDebounceS = 1;
+        params.exitDebounceS = 1;
+        rig.ctrl->scene()->setParams(params);
+        rig.hal.state.gpu.utilPercent = 90;
+        rig.tick();
+        rig.hal.externalMode = ThermalMode::GMode;
+        rig.tick(10);
+        QCOMPARE(rig.ctrl->baseline()->mode(), ThermalMode::Balanced);
+        rig.hal.state.gpu.utilPercent = 0;
+        rig.tick();
+        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::Balanced));
+
+        rig.ctrl->baseline()->setMode(ThermalMode::Custom);
+        rig.ctrl->forceNextModeWrite();
+        rig.tick();
+        rig.hal.writes.clear();
+        rig.hal.state.gpu.utilPercent = 90;
+        rig.tick();
+        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::GMode));
+        QCOMPARE(countWrites(rig.hal.writes, MockHal::Write::Kind::FanPercent), 0);
+        rig.hal.writes.clear();
+        rig.hal.state.gpu.utilPercent = 0;
+        rig.tick();
+        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::Custom));
+        QCOMPARE(countWrites(rig.hal.writes, MockHal::Write::Kind::FanPercent), 2);
+    }
+
+    void resetClearsManualOverrides() {
+        Rig rig;
+        ControlTargets manual;
+        manual.mode = ThermalMode::GMode;
+        rig.ctrl->manual()->set(manual, rig.fakeNow);
+        rig.ctrl->setManualProfileName(QStringLiteral("old"));
+        rig.cfg->resetToDefaults();
+        rig.ctrl->reloadFromConfig();
+        QVERIFY(!rig.ctrl->manual()->active(rig.fakeNow));
+        QVERIFY(rig.ctrl->manualProfileName().isEmpty());
+        rig.ctrl->setPowerPlanSyncEnabled(false); // reset restored the production default
+        rig.tick();
+        QVERIFY(hasModeWrite(rig.hal.writes, ThermalMode::Balanced));
+    }
+
+    void queuedCustomThenBalancedIsNotLost() {
+        FakePowerCfg fake;
+        Rig rig;
+        rig.ctrl->setPowerCfgProgram(fake.program());
+        rig.ctrl->setPowerPlanSyncEnabled(true);
+        rig.ctrl->handlePlanSync(ThermalMode::Custom);
+        QTRY_VERIFY(fake.trace().contains("/list"));
+        rig.ctrl->handlePlanSync(ThermalMode::Balanced);
+        fake.release();
+        QTRY_VERIFY(fake.trace().contains("/setactive 381b4222-f694-41f0-9685-ff5bb260df2e"));
+        QTRY_COMPARE(rig.ctrl->activePlanName(), QStringLiteral("Balanced"));
+    }
+
+    void disablingSyncCancelsInFlightContinuation() {
+        FakePowerCfg fake;
+        Rig rig;
+        rig.ctrl->setPowerCfgProgram(fake.program());
+        rig.ctrl->setPowerPlanSyncEnabled(true);
+        rig.ctrl->handlePlanSync(ThermalMode::GMode);
+        QTRY_VERIFY(fake.trace().contains("/list"));
+        rig.ctrl->setPowerPlanSyncEnabled(false);
+        fake.release();
+        QTest::qWait(200);
+        QVERIFY(!fake.trace().contains("/setactive"));
+        QVERIFY(!fake.trace().contains("-duplicatescheme"));
+    }
+
+    void newestCustomRequestCancelsHighPlanMutation() {
+        FakePowerCfg fake;
+        Rig rig;
+        rig.ctrl->setPowerCfgProgram(fake.program());
+        rig.ctrl->setPowerPlanSyncEnabled(true);
+        rig.ctrl->handlePlanSync(ThermalMode::GMode);
+        QTRY_VERIFY(fake.trace().contains("/list"));
+        rig.ctrl->handlePlanSync(ThermalMode::Custom);
+        fake.release();
+        QTRY_VERIFY(fake.trace().contains("/getactivescheme"));
+        QTest::qWait(100);
+        QVERIFY(!fake.trace().contains("/setactive"));
     }
 
     void emitsSnapshotSignal() {

@@ -1,10 +1,11 @@
 # Dell Toolbox
 
 Open-source control center for Dell G-series laptops: thermal profiles, live
-mode monitoring, fan control, charging modes and power overrides. A free
+mode monitoring, fan control, charging modes and Windows power plans. A free
 replacement for Alienware Command Center (AWCC) and Dell Power Manager, built
-on the native Dell firmware interfaces those apps use - no Dell services, no
-Dell Command | Configure, no telemetry.
+on native Dell firmware interfaces, with no telemetry. Dell services and Dell
+Command | Configure are not mandatory: charging uses the available DPM service,
+Dell ACPI-WMI, or CCTK fallback transport.
 
 Primary target: **Dell G3 3590** (i5-9300H / i7-9750H + GTX 1650/1660 Ti).
 Other AWCC-capable Dell G / Alienware machines likely work - check with
@@ -13,11 +14,13 @@ Other AWCC-capable Dell G / Alienware machines likely work - check with
 ## Features
 
 **Thermal**
-- Six profiles executed by the BIOS: Quiet / Cool / Optimized (Balanced) /
-  Ultra Performance / G-Mode / Custom - the same profiles AWCC and Dell Power
-  Manager expose, written through the native AWCC WMI interface
+- Firmware profiles: Quiet / Cool / Optimized (Balanced) / Ultra Performance /
+  G-Mode through the native AWCC WMI interface (hardware support varies).
+  Custom first selects manual fan firmware mode, then applies application-controlled
+  fan curves/minimum speeds; it is not another factory-tuned preset. Hardware
+  acceptance and fan response must be checked on the target machine.
 - Live profile monitoring: a mode set in AWCC or Dell Power Manager is picked
-  up within a second (G-Mode included) and shown in the app and tray
+  up after debounced readback (G-Mode included) and shown in the app and tray
 - Fan curves: read-only reference curves per mode, plus Custom with Easy
   (per-fan minimum speed) and Advanced (temperature/fan curve editor) styles,
   with reset to defaults
@@ -32,7 +35,10 @@ Other AWCC-capable Dell G / Alienware machines likely work - check with
 
 **Performance**
 - Windows power plan switching (powercfg)
-- Named manual power-limit profiles (New / Rename / Delete / Save)
+- Named power-limit **drafts** (New / Rename / Delete / Save). CPU PL1/PL2
+  and GPU power-limit writes are not implemented: saving does not activate a
+  hardware profile or override thermal control. Thermal Custom fan control
+  is separate and remains functional.
 
 **Battery**
 - Charging modes (Adaptive / Standard / Express / Primarily AC / Custom with
@@ -58,15 +64,16 @@ next to the executable.
 
 ## Building
 
-Windows (MSVC + Qt 6.8, Qt Charts not required):
+The released product targets Windows only (MSVC + Qt 6.8, Qt Charts not required):
 
 ```
 cmake -B build -DDTB_HAL=win
 cmake --build build --config Release
 ```
 
-Development on Linux builds the core with a scripted mock HAL (win-only
-backends compile in CI):
+Linux is an optional mock development/test harness, not a released Linux client.
+It builds the core and UI with a scripted mock HAL; real Windows backends compile
+in Windows CI:
 
 ```
 cmake -B build -DDTB_HAL=mock

@@ -23,6 +23,11 @@ public:
     virtual int sensorTemp(SensorId id) = 0;
     virtual int fanRpm(FanId id) = 0;
     virtual bool setMode(ThermalMode mode) = 0;
+    // Optional nonblocking write verification. Only the active controller may
+    // poll; entering monitor-only or issuing a new request must cancel it.
+    virtual void pollPendingModeWrite() {}
+    virtual void cancelPendingModeWrite() {}
+    virtual bool hasPendingModeWrite() const { return false; }
     virtual bool setFanPercent(FanId fan, int percent) = 0;
     virtual bool available() = 0;
     // Whether the machine accepts G-Mode (unknown until the first attempt on

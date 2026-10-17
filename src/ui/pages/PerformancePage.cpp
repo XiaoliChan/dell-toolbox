@@ -1,9 +1,10 @@
 #include "ui/pages/PerformancePage.h"
 
-#include <QDateTime>
+#include <QAbstractItemView>
 #include <QComboBox>
 #include <QInputDialog>
 #include <QProcess>
+#include <QPointer>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -39,7 +40,7 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
 
     // Manual power limits are opt-in through named profiles, kept in their
     // own visible card: the list shows everything saved, the buttons act on
-    // the selection, sliders edit, Save persists + activates.
+    // the selection, sliders edit, Save persists draft targets only.
     m_profilesData = m_config->loadManualProfiles();
     auto* profilesCard = new Card(QStringLiteral("Custom power profiles"), this);
     auto* pbody = profilesCard->bodyLayout();
@@ -59,7 +60,7 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
     buttonRow->addWidget(m_deleteProfile);
     pbody->addLayout(buttonRow);
     auto* hint = new QLabel(
-        tr("Select a profile to activate it; edit the sliders and press Save profile to keep it."),
+        tr("Draft targets only — CPU/GPU power-limit writes are not supported. Select a profile to edit and save it."),
         profilesCard);
     pbody->addWidget(hint);
     wrapLabel(hint);
@@ -87,7 +88,6 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
         refreshProfiles(p.name);
         m_manualCard->setVisible(true);
         m_saveProfile->setVisible(true);
-        applyManual();
     });
     connect(m_renameProfile, &QPushButton::clicked, this, [this] {
         const int i = m_profileList->currentRow();
@@ -116,13 +116,12 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
         m_manualCard->setVisible(!m_profilesData.isEmpty());
         m_saveProfile->setVisible(!m_profilesData.isEmpty());
     });
-    // Selecting a row activates that profile right away.
+    // Selecting a row only loads saved draft targets.
     connect(m_profileList, &QListWidget::currentRowChanged, this, [this](int index) {
         if (index < 0 || index >= m_profilesData.size())
             return;
         m_pl1->setValue(m_profilesData[index].pl1W);
         m_pl2->setValue(m_profilesData[index].pl2W);
-        applyManual();
         updateActiveLabel();
     });
     connect(m_saveProfile, &QPushButton::clicked, this, [this] {
@@ -133,7 +132,6 @@ PerformancePage::PerformancePage(HalSet hal, Controller* controller, ConfigStore
         m_profilesData[i].pl2W = m_pl2->value();
         m_config->saveManualProfiles(m_profilesData);
         refreshProfiles(m_profilesData[i].name);
-        applyManual(); // records the override for the control loop
         updateActiveLabel();
     });
 
@@ -165,58 +163,81 @@ void PerformancePage::refreshProfiles(const QString& selectName) {
         m_pl1->setValue(m_profilesData[idx].pl1W);
         m_pl2->setValue(m_profilesData[idx].pl2W);
     }
-    // currentRowChanged is blocked above (no applyManual here: activating a
-    // profile stays a user action), so refresh the caption directly or it
-    // stays on "No active profile" after startup/reset/rename/delete.
+    // Refresh the draft caption while selection signals are blocked.
     updateActiveLabel();
+}
+
+void PerformancePage::updatePowerPlans(const QVector<PowerPlanEntry>& plans, const QString& activeGuid) {
+    // Never replace the popup model while the user navigates it.
+    if (m_planCombo->view()->isVisible() || plans.isEmpty())
+        return;
+    const QSignalBlocker block(m_planCombo);
+    m_planCombo->clear();
+    for (const auto& p : plans)
+        m_planCombo->addItem(p.name, p.guid);
+    int activeIndex = -1;
+    for (int i = 0; i < m_planCombo->count(); ++i)
+        if (m_planCombo->itemData(i).toString().compare(activeGuid, Qt::CaseInsensitive) == 0) {
+            activeIndex = i;
+            break;
+        }
+    m_planCombo->setCurrentIndex(activeIndex);
+}
+
+void PerformancePage::refreshPowerPlans() {
+    if (m_planRefreshBusy || m_planCombo->view()->isVisible())
+        return;
+    m_planRefreshBusy = true;
+    auto* list = new QProcess(this);
+    auto* timeout = new QTimer(list);
+    timeout->setSingleShot(true);
+    connect(timeout, &QTimer::timeout, list, &QProcess::kill);
+    timeout->start(10000);
+    connect(list, &QProcess::errorOccurred, this, [this, list](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) {
+            m_planRefreshBusy = false;
+            list->deleteLater();
+        }
+    });
+    connect(list, &QProcess::finished, this, [this, list](int code, QProcess::ExitStatus status) {
+        list->deleteLater();
+        m_planRefreshBusy = false;
+        if (code != 0 || status != QProcess::NormalExit)
+            return; // retain the last successful read on errors
+        const QString output = QString::fromLocal8Bit(list->readAllStandardOutput());
+        QString activeGuid;
+        for (const QString& line : output.split(QLatin1Char('\n'))) {
+            if (!line.trimmed().endsWith(QLatin1Char('*')))
+                continue;
+            const auto active = parsePowerPlans(line);
+            if (!active.isEmpty())
+                activeGuid = active.first().guid;
+        }
+        updatePowerPlans(parsePowerPlans(output), activeGuid);
+    });
+    list->start(m_controller->powerCfgProgram(), {QStringLiteral("/list")});
 }
 
 QWidget* PerformancePage::buildPowerPlanCard() {
     auto* box = new Card(QStringLiteral("Operating system power plan"), this);
     auto* layout = box->bodyLayout();
     m_planCombo = new QComboBox(box);
-    m_planCombo->setMinimumWidth(360);
+    m_planCombo->setObjectName(QStringLiteral("powerPlanCombo"));
     layout->addWidget(m_planCombo);
-    // User selection switches the plan. The 5 s tracker below mutates the
-    // combo under a signal blocker, so this fires for user changes only.
-    connect(m_planCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+    connect(m_planCombo, &QComboBox::activated, this, [this](int index) {
         const QString guid = m_planCombo->itemData(index).toString();
-        if (guid.isEmpty())
+        if (guid.isEmpty() || m_controller->passive())
             return;
-        QProcess::startDetached(QStringLiteral("powercfg"), {QStringLiteral("/setactive"), guid});
+        const QPointer<PerformancePage> guard(this);
+        m_controller->setActivePlan(guid, [guard](bool) { if (guard) guard->refreshPowerPlans(); });
     });
-
-    // powercfg can take seconds: run it asynchronously and never block the
-    // UI thread. A 5 s timer tracks plans changed outside the app.
-    auto refresh = [this] {
-        auto* list = new QProcess(this);
-        connect(list, &QProcess::finished, this, [this, list] {
-            list->deleteLater();
-            const QVector<PowerPlanEntry> plans =
-                parsePowerPlans(QString::fromLocal8Bit(list->readAllStandardOutput()));
-            auto* active = new QProcess(this);
-            connect(active, &QProcess::finished, this, [this, active, plans] {
-                active->deleteLater();
-                const auto activePlans = parsePowerPlans(QString::fromLocal8Bit(active->readAllStandardOutput()));
-                const QString activeGuid = activePlans.isEmpty() ? QString() : activePlans.first().guid;
-                const QSignalBlocker block(m_planCombo);
-                m_planCombo->clear();
-                int idx = -1;
-                for (const auto& p : plans) {
-                    m_planCombo->addItem(p.name, p.guid);
-                    if (p.guid == activeGuid)
-                        idx = m_planCombo->count() - 1;
-                }
-                if (idx >= 0)
-                    m_planCombo->setCurrentIndex(idx);
-            });
-            active->start(QStringLiteral("powercfg"), {QStringLiteral("/getactivescheme")});
-        });
-        list->start(QStringLiteral("powercfg"), {QStringLiteral("/list")});
-    };
-    refresh();
+    m_planCombo->setEnabled(!m_controller->passive());
+    connect(m_controller, &Controller::snapshotUpdated, this, [this] {
+        m_planCombo->setEnabled(!m_controller->passive());
+    });
+    refreshPowerPlans();
     auto* planTimer = new QTimer(box);
-    connect(planTimer, &QTimer::timeout, this, refresh);
+    connect(planTimer, &QTimer::timeout, this, &PerformancePage::refreshPowerPlans);
     planTimer->start(5000);
     return box;
 }
@@ -242,7 +263,6 @@ QWidget* PerformancePage::buildSlidersCard() {
         connect(*slider, &QSlider::valueChanged, this, [this, slider, value](int v) {
             (*value)->setText(QString::number(v) + QStringLiteral(" W"));
         });
-        connect(*slider, &QSlider::sliderReleased, this, [this] { applyManual(); });
     };
 
     makeRow(tr("CPU PL1 (sustained)"), kPl1MinW, kPl1MaxW, &m_pl1, &m_pl1Value);
@@ -256,15 +276,13 @@ QWidget* PerformancePage::buildSlidersCard() {
     m_gpuPptValue->setText(tr("n/a"));
 
     auto* caption = new QLabel(
-        tr("These sliders record targets; hardware write-through lands in a future update and they "
-           "do not change the CPU's power limits yet. Targets expire after %1 minutes.")
-            .arg(QString::number(m_controller->manual()->expiresSec / 60)),
+        tr("Saved drafts only. These sliders do not change CPU or GPU power limits."),
         box);
     wrapLabel(caption); // a bare QLabel's min width is the full line: overflowed narrow windows
     layout->addWidget(caption);
     m_activeLabel = new QLabel(box);
     m_activeLabel->setObjectName(QStringLiteral("cardCaption"));
-    m_activeLabel->setStyleSheet(QStringLiteral("color:#4ade80;"));
+
     layout->addWidget(m_activeLabel);
     updateActiveLabel();
     return box;
@@ -275,24 +293,10 @@ void PerformancePage::updateActiveLabel() {
         return; // list is created after the sliders card during construction
     const int i = m_profileList->currentRow();
     if (i < 0 || i >= m_profilesData.size()) {
-        m_activeLabel->setText(tr("No active profile - targets come from the automatic loop"));
+        m_activeLabel->setText(tr("No draft profile selected"));
         return;
     }
-    m_activeLabel->setText(tr("Active: %1 (targets expire after %2 minutes)")
-                               .arg(m_profilesData[i].name)
-                               .arg(QString::number(m_controller->manual()->expiresSec / 60)));
-}
-
-void PerformancePage::applyManual() {
-    ControlTargets t;
-    t.cpuPl1W = m_pl1->value();
-    t.cpuPl2W = m_pl2->value();
-    if (m_gpuPpt->isEnabled())
-        t.gpuPptW = m_gpuPpt->value();
-    m_controller->manual()->set(t, QDateTime::currentMSecsSinceEpoch());
-    const int i = m_profileList->currentRow();
-    m_controller->setManualProfileName(i >= 0 && i < m_profilesData.size() ? m_profilesData[i].name
-                                                                           : tr("Custom"));
+    m_activeLabel->setText(tr("Draft: %1 — not applied to hardware").arg(m_profilesData[i].name));
 }
 
 } // namespace dtb::ui
