@@ -95,3 +95,12 @@ ctest --test-dir build
 ## License
 
 GPLv3 - see [LICENSE](LICENSE).
+
+### 自动版本与正式发布
+
+- 推送 `main` 自动准备下一个 **patch** 版本，同步 `AppInfo.h`、CMake 和 Windows 资源版本，并根据上个版本以来的真实提交生成 `CHANGELOG.md`。
+- 同一份准备后的源码必须依次通过 Windows mock 单元/UI 测试、真实 HAL 编译、安装包构建与实际打包 EXE 启动检查。构建产物先上传 Actions；全部成功后才提交版本变更、原子推送 `main` 与 `vX.Y.Z` 标签，并创建正式 Release。
+- 手动 `workflow_dispatch` 默认 **只验证、不升版本、不发布**；显式勾选 `publish` 才从 `main` 发布。外部 `v*` 标签要求源码各处版本与标签一致，测试成功后发布该版本，不再次升版本。
+- 失败重跑：若版本提交与标签已成功推送，复用该提交重新构建，更新同一 Release 的说明与附件，不重复升版本；若其他提交已推进 `main`，旧运行明确失败，请运行最新 `main`。构建后源码、版本或标签漂移也会拒绝发布。
+- 工作流使用 `GITHUB_TOKEN` 写入版本提交，避免递归触发；仓库须允许 Actions 写入 contents，分支保护也须允许该正常推送。不会 force push 或绕过保护。
+- 发布脚本回归可独立运行：`python -m unittest discover -s scripts -p test_release.py -v`。它只操作临时本地 Git 仓库，不访问或发布 GitHub Release。

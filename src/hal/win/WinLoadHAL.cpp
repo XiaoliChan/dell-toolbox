@@ -1,7 +1,8 @@
 #include "hal/win/WinLoadHAL.h"
 
-#include <pdh.h>
 #include <windows.h>
+#include <pdh.h>
+#include <pdhmsg.h>
 
 #include <QLoggingCategory>
 #include <QString>

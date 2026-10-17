@@ -8,3 +8,4 @@ compile_commands.json
 Testing/
 /reference/
 dist/
+__pycache__/
