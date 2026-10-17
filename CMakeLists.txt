@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(dell-toolbox
-    VERSION 1.1.2
+    VERSION 1.1.3
     DESCRIPTION "Open-source Dell toolbox: thermal control, power management"
     LANGUAGES CXX)
 
